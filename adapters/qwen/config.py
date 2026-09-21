@@ -12,7 +12,7 @@ SDK_SOURCE = (
     "https://github.com/dashscope/dashscope-sdk-python/blob/"
     "b0b4469e13dd1b0c1d842f99fbfc6a300c5dc760/dashscope/audio/qwen_omni/omni_realtime.py"
 )
-ADAPTER_VERSION = "0.4.0"
+ADAPTER_VERSION = "0.4.1"
 INPUT_FORMAT = AudioFormat(sample_rate_hz=16000)
 OUTPUT_FORMAT = AudioFormat(sample_rate_hz=24000)
 AUDIO_3_REALTIME_MODELS = {
@@ -59,11 +59,7 @@ def session_update(config: SessionConfig, settings: QwenSettings) -> dict:
     if audio_3:
         if config.vad:
             raise ValueError("Qwen Audio 3.0 smart_turn profile does not accept server VAD tuning")
-        turn_detection = {
-            "type": "smart_turn",
-            "create_response": False,
-            "interrupt_response": True,
-        }
+        turn_detection = {"type": "smart_turn"}
     else:
         turn_detection = {
             "type": "server_vad",

@@ -95,8 +95,6 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         self._session_started = False
         self._seen_vendor_ids: set[str] = set()
         self._confirmed: set[str] = set()
-        self._audio3_committed_items: set[str] = set()
-        self._audio3_response_items: set[str] = set()
         self._followup_response_waiter: asyncio.Future | None = None
         self.high_watermarks = {"incoming": 0, "events": 0}
         self.effective_config: EffectiveConfig | None = None
@@ -142,7 +140,7 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             "websocket_close_code": getattr(self._ws, "close_code", None),
             "server_finish_seen": self._finished.is_set(),
             "fatal_error_code": self._failure.code if self._failure else None,
-            "audio3_response_policy": "client_create_after_user_item"
+            "audio3_response_policy": "server_smart_turn"
             if self.settings.model in AUDIO_3_REALTIME_MODELS
             else "server_turn_detection",
         }
@@ -278,15 +276,6 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
                 break
         raise QwenAdapterError("response_slot_busy", "tool follow-up response remained busy")
 
-    async def _update_audio3_tool_choice(self, choice: str) -> None:
-        self._updated = asyncio.get_running_loop().create_future()
-        await self._send_message("session.update", session={"tool_choice": choice})
-        acknowledgement, _, _ = await self._wait_control(self._updated)
-        if acknowledgement.get("session", {}).get("tool_choice") != choice:
-            raise QwenAdapterError(
-                "configuration_mismatch", "server did not confirm updated tool_choice"
-            )
-
     async def _configure(self, config: SessionConfig) -> EffectiveConfig:
         request = session_update(config, self.settings)
         self._updated = asyncio.get_running_loop().create_future()
@@ -409,19 +398,8 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             if value["response_id"] == response.response_id and cid not in self._tool_results
         ]
         superseded = self.mapper.latest_input_turn not in {None, response.turn_id}
-        auto_followup = (
-            not pending
-            and not superseded
-            and self.settings.model in AUDIO_3_REALTIME_MODELS
-            and self.config.provider_options.get("tool_followup_choice") == "none"
-        )
-        waiter = None
         if not pending and not superseded and response.turn_id:
             self.mapper.note_commit(response.turn_id)
-        if auto_followup:
-            waiter = asyncio.get_running_loop().create_future()
-            self._followup_response_waiter = waiter
-            await self._update_audio3_tool_choice("none")
         if self.settings.model in AUDIO_3_REALTIME_MODELS:
             output = (
                 result.result
@@ -459,16 +437,6 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         # A newer real audio turn owns the next response. Inject the old tool
         # result into history, but do not start another answer to the old turn.
         if not pending and not superseded:
-            if waiter is not None:
-                try:
-                    async with asyncio.timeout(2):
-                        await asyncio.shield(waiter)
-                    return
-                except TimeoutError:
-                    pass
-                finally:
-                    if self._followup_response_waiter is waiter:
-                        self._followup_response_waiter = None
             await self._create_tool_followup_response()
 
     async def _read_wire(self) -> None:
@@ -573,33 +541,6 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
                         str(error.get("code", "vendor_error")),
                         str(error.get("message", "Qwen error")),
                     )
-                if (
-                    kind == "input_audio_buffer.committed"
-                    and self.settings.model in AUDIO_3_REALTIME_MODELS
-                    and self.config is not None
-                    and self.config.turn_mode == "server_vad"
-                ):
-                    item_id = clean.get("item_id")
-                    if not isinstance(item_id, str) or not item_id:
-                        raise ValueError("Audio 3.0 committed event lacks item_id")
-                    self._audio3_committed_items.add(item_id)
-                if (
-                    kind == "conversation.item.created"
-                    and self.settings.model in AUDIO_3_REALTIME_MODELS
-                    and self.config is not None
-                    and self.config.turn_mode == "server_vad"
-                ):
-                    item = clean.get("item", {})
-                    item_id = item.get("id")
-                    if (
-                        item.get("role") == "user"
-                        and item_id in self._audio3_committed_items
-                        and item_id not in self._audio3_response_items
-                    ):
-                        self._audio3_response_items.add(item_id)
-                        await self._send_message(
-                            "response.create", response=self._response_options()
-                        )
             if not self._closing and not self._finished.is_set():
                 self._fail("connection_closed", getattr(self, "_wire_close_type", "EOF"))
         except asyncio.CancelledError:

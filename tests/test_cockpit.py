@@ -220,11 +220,7 @@ def test_qwen_audio_3_profile_uses_smart_turn_and_audio_voice():
         }
     )
     body = session_update(config, QwenSettings(model=config.model))
-    assert body["turn_detection"] == {
-        "type": "smart_turn",
-        "create_response": False,
-        "interrupt_response": True,
-    }
+    assert body["turn_detection"] == {"type": "smart_turn"}
     assert body["modalities"] == ["audio", "text"]
     config_with_tool = config.model_copy(
         update={
@@ -247,43 +243,77 @@ def test_qwen_audio_3_profile_uses_smart_turn_and_audio_voice():
         )
 
 
-class CockpitToolSocket(FakeSocket):
+class Audio3CockpitToolSocket(FakeSocket):
     def __init__(self):
         super().__init__(auto_response=False)
-        self.response_count = 0
+        self.initial_response_sent = False
 
     async def send(self, text):
-        await super().send(text)
         data = json.loads(text)
-        if data["type"] != "response.create":
-            return
-        self.response_count += 1
-        response_id = f"r{self.response_count}"
-        self.push(
-            {"type": "response.created", "response": {"id": response_id, "status": "in_progress"}}
-        )
-        if self.response_count == 1:
+        await super().send(text)
+        if data["type"] == "input_audio_buffer.append" and not self.initial_response_sent:
+            self.initial_response_sent = True
+            self.push(
+                {"type": "input_audio_buffer.speech_started", "item_id": "u1", "audio_start_ms": 0}
+            )
+            self.push(
+                {"type": "input_audio_buffer.speech_stopped", "item_id": "u1", "audio_end_ms": 100}
+            )
+            self.push({"type": "input_audio_buffer.committed", "item_id": "u1"})
+            self.push(
+                {
+                    "type": "conversation.item.created",
+                    "item": {
+                        "id": "u1",
+                        "type": "message",
+                        "role": "user",
+                        "status": "completed",
+                        "content": [{"type": "input_audio"}],
+                    },
+                }
+            )
+            self.push(
+                {
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "item_id": "u1",
+                    "transcript": "切换到运动模式",
+                }
+            )
+            self.push(
+                {"type": "response.created", "response": {"id": "r1", "status": "in_progress"}}
+            )
             self.push(
                 {
                     "type": "response.function_call_arguments.done",
-                    "response_id": response_id,
+                    "response_id": "r1",
                     "name": "setDrivingMode",
                     "arguments": json.dumps({"mode": "DRIVING_SPORT"}),
                     "call_id": "call_1",
                 }
             )
-        else:
+            self.push({"type": "response.done", "response": {"id": "r1", "status": "completed"}})
+        elif data["type"] == "conversation.item.create":
+            self.push(
+                {
+                    "type": "conversation.item.created",
+                    "item": {**data["item"], "status": "completed"},
+                }
+            )
+        elif data["type"] == "response.create":
+            self.push(
+                {"type": "response.created", "response": {"id": "r2", "status": "in_progress"}}
+            )
             self.push(
                 {
                     "type": "response.audio.delta",
-                    "response_id": response_id,
+                    "response_id": "r2",
                     "delta": base64.b64encode(b"\x01\x00" * 480).decode(),
                 }
             )
-            self.push({"type": "response.audio.done", "response_id": response_id})
-        self.push(
-            {"type": "response.done", "response": {"id": response_id, "status": "completed"}}
-        )
+            self.push({"type": "response.audio.done", "response_id": "r2"})
+            self.push(
+                {"type": "response.done", "response": {"id": "r2", "status": "completed"}}
+            )
 
 
 def test_catalog_agent_recording_replays_from_sealed_catalog(
@@ -326,17 +356,24 @@ def test_catalog_agent_recording_replays_from_sealed_catalog(
         turn_assets=("audio",),
         allow_retries=False,
     )
-    public = public_config(scenario, session_config(), catalog).model_dump_json()
+    config = session_config(mode="server_vad", voice="longanqian").model_copy(
+        update={
+            "model": "qwen-audio-3.0-realtime-flash",
+            "provider_options": {"tool_followup_choice": "none"},
+        }
+    )
+    public = public_config(scenario, config, catalog).model_dump_json()
     assert "setDrivingMode" in public and "DRIVING_SPORT" in public
     root = tmp_path / "cockpit-agent"
+    socket = Audio3CockpitToolSocket()
     trial = asyncio.run(
         run_agent_case(
-            factory_for(CockpitToolSocket()),
+            factory_for(socket, model=config.model),
             scenario=scenario,
             source_wavs={"input.wav": (tmp_path / "input.wav").read_bytes()},
             output=root,
             context=context,
-            config=session_config(),
+            config=config,
             profile=LatencyProfile(
                 max_send_lateness_ms=100,
                 max_send_duration_ms=100,
@@ -352,3 +389,10 @@ def test_catalog_agent_recording_replays_from_sealed_catalog(
     assert evaluate(root) == result
     recording = read_recording(root)
     assert any(event.event == "tool_result_sent" for event in recording.events)
+    response_creates = [event for event in socket.sent if event["type"] == "response.create"]
+    assert len(response_creates) == 1
+    assert response_creates[0]["response"]["tool_choice"] == "none"
+    session_updates = [event for event in socket.sent if event["type"] == "session.update"]
+    assert len(session_updates) == 1
+    assert session_updates[0]["session"]["turn_detection"] == {"type": "smart_turn"}
+    assert trial["backend"]["audio3_response_policy"] == "server_smart_turn"
