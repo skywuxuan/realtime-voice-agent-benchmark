@@ -88,7 +88,7 @@ runs/my-phase1-smoke/
 
 `dataset.cockpit` 可以直接导入 `common_func_100.jsonl` 与白名单 JSONL，生成冻结 TTS、工具 catalog 和半双工 Agent suite。Audio 3.0 使用独立的 smart-turn、`longanqian` 和 2400ms 尾静音配置。
 
-5-case 真实 smoke 工件位于 `runs/qwen-audio3-cockpit-smoke-20260921-001/`。5 条的首调用函数名和参数均完全正确，但每条都重复执行一次相同调用，因此严格 Task Completion 为 0/5，不能宣称通过。全量源审计另发现 478 条协议/期望参数冲突和 140 条 no-tool 样本；报告见 `reports/cockpit-source-audit-20260921.json`。准备命令、批量分片方式和协议实测见 [座舱 Benchmark 说明](docs/cockpit-benchmark.md)。
+旧 5-case 工件 `runs/qwen-audio3-cockpit-smoke-20260921-001/` 的重复调用已确认由 adapter 多发首轮 `response.create` 造成，保留作历史协议证据。0.4.1 修复后的 `runs/qwen-audio3-cockpit-smoke-20260921-002/` 为3pass/1参数fail/1发送调度invalid、重复0/4；目标电量独立重试 `runs/qwen-audio3-cockpit-target-battery-retry-20260921-001/` pass且无重复。五个修复后eligible样本合计4pass/1fail、重复0/5。全量源审计另发现478条协议/期望参数冲突和140条no-tool样本；报告见 `reports/cockpit-source-audit-20260921.json`。准备命令、批量分片方式和协议实测见 [座舱 Benchmark 说明](docs/cockpit-benchmark.md)。
 
 ## Latency Benchmark
 

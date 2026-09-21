@@ -28,8 +28,9 @@
 - 文本输入缓存身份只包含文本、TTS profile、renderer/decoder 与渲染 recipe；完整 compiler/schema 指纹用于 Scenario compilation ID。正式对比先冻结音频，再去掉 `--render-missing`，避免运行时意外调用收费 TTS。
 - `dataset.cockpit` 已支持导入 `common_func_100.jsonl` 和 `白名单_100.jsonl`，转换100个函数为严格 JSON Schema，按一基行号或 `start-line + limit` 生成半双工 Agent suite。20,169条源数据中20,029条有工具、140条no-tool；no-tool必须另建 False Tool Call Rate suite。
 - 全量源审计 `reports/cockpit-source-audit-20260921.json` 显示19,551条工具样本符合协议、478条存在期望参数类型/形状冲突。编译器拒绝冲突行，不做静默类型转换；批量运行前必须修源数据或建立有版本的显式 normalization。
-- Audio 3.0 Flash 配置使用 `longanqian`、smart-turn、2400ms尾静音及200ms输入分帧。真实 smoke `runs/qwen-audio3-cockpit-smoke-20260921-001/` 的5条均completed/eligible；首调用函数和参数均5/5正确，但5/5各重复一次相同调用，严格 Task Completion为0/5。离线重评为 `eval_dce531cd2a086d329206`。完整说明见 `docs/cockpit-benchmark.md`。
-- Audio 3.0 调通过程中的 probe `001`–`017` 不删除：`001`配置回显过严，`002/004/005`话轮未生成，`003`发送调度invalid，`007`起暴露 response/tool续答竞态，后续记录重复调用策略实验。它们是协议适配证据，不能改写为统一的模型失败样本或成功样本。
+- Audio 3.0 Flash 配置使用 `longanqian`、smart-turn、2400ms尾静音及200ms输入分帧。官方 Smart Cockpit 时序核验后，adapter 0.4.1 改为服务端 smart-turn 自动首答，只在工具结果后发送一次 response 级 `tool_choice:none`。旧 `runs/qwen-audio3-cockpit-smoke-20260921-001/` 的5/5重复调用由客户端多发首轮 `response.create` 污染，保留作历史协议证据，不能再归因为模型。
+- 修复后真实 `runs/qwen-audio3-cockpit-smoke-20260921-002/` 为4 eligible（3 pass、1参数fail）及1发送调度invalid，0/4重复调用，离线重评 `eval_0ad5644653947a034537`。invalid 的目标电量在独立 `runs/qwen-audio3-cockpit-target-battery-retry-20260921-001/` 中pass且无重复，重评 `eval_5e5fe97e857a1e546489`。五个修复后eligible样本合计4pass/1fail、重复0/5；悬架fail为ASR“中子”且模型多传非法 `action=SET`。不要删除或用重试覆盖原invalid。
+- Audio 3.0 调通过程中的 probe `001`–`017` 不删除：`001`配置回显过严，`002/004/005`话轮未生成，`003`发送调度invalid，`007`起暴露 response/tool续答竞态，后续记录重复调用策略实验。它们是协议适配证据，不能改写为统一的模型失败样本或成功样本；尤其不能继续用其中的额外 response 证明模型必然重复调用。
 
 ## 工程边界
 

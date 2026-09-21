@@ -214,9 +214,9 @@ Phase 3 还观察到两次客户端收尾未收到 WebSocket close 确认，code
 
 2026-09-21 依据用户指定的 `qwen-audio-agent` cockpit demo 接入 `qwen-audio-3.0-realtime-flash`。参考实现固定了 `longanqian`、16kHz PCM 输入、24kHz PCM 输出、smart-turn 和 Function Calling；本项目实际连接确认同一北京 Realtime endpoint 可用。
 
-Audio 3.0 的会话与 Qwen3.5 Omni 有几处实际差异：session 必须包含 text modality；smart-turn 回显 2000ms 静音窗口；`session.updated` 不回显 input audio format；user item 建立后需要显式创建首轮 response；工具结果续答会遇到单 response slot busy 竞态。所有分支都封装在 Qwen adapter，runner 未加入厂商事件名。probe `001`–`017` 均保留，分别记录配置回显、尾静音、调度、modalities、response 时序、busy 以及重复调用策略实验；其中既有 infra/invalid，也有完成会话但严格任务失败的样本，不能混为模型得分。
+Audio 3.0 的会话与 Qwen3.5 Omni 有几处实际差异：session 必须包含 text modality；smart-turn 回显2000ms静音窗口；`session.updated` 不回显 input audio format；smart-turn由服务端自动创建首轮response；工具结果注入后才由客户端显式创建后续response。所有分支都封装在Qwen adapter，runner未加入厂商事件名。probe `001`–`017` 均保留，分别记录配置回显、尾静音、调度、modalities、response时序和busy竞态；其中既有infra/invalid，也有被旧adapter额外response污染的完成会话，不能混为模型得分。
 
-最终 5-case 工件 `runs/qwen-audio3-cockpit-smoke-20260921-001/` 全部完成音频输入、工具结果回传和语音输出。首调用函数及参数 5/5 正确，但每条随后重复同一调用一次，严格 Task Completion 0/5。完整数据编译和指标见 [座舱 Benchmark](cockpit-benchmark.md)。
+旧 `runs/qwen-audio3-cockpit-smoke-20260921-001/` 的5/5重复调用已确认来自adapter多发首轮 `response.create`，不能继续归因为模型。0.4.1修复后的 `runs/qwen-audio3-cockpit-smoke-20260921-002/` 为3pass/1参数fail/1发送调度invalid、重复0/4；目标电量独立重试 `runs/qwen-audio3-cockpit-target-battery-retry-20260921-001/` pass且无重复。五个修复后eligible样本合计4pass/1fail、重复0/5。完整数据编译和指标见 [座舱 Benchmark](cockpit-benchmark.md)。
 
 
 [sdk]: https://github.com/dashscope/dashscope-sdk-python/tree/b0b4469e13dd1b0c1d842f99fbfc6a300c5dc760

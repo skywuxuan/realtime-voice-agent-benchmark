@@ -36,12 +36,13 @@ system prompt 参考 `qwen-audio-agent/examples/smart-cockpit` 的原则：明�
 - endpoint 与现有 Qwen Realtime adapter 相同。
 - session 必须包含 text modality；本项目请求 text + audio。
 - `session.updated` 不回显 input audio format，因此该字段保留为 unverified，voice、output format 和 turn detection 仍严格检查。
-- smart-turn 实际回显 2000ms 静音窗口，输入 profile 使用 2400ms 尾静音。
-- 该模型在 user item 建立后需要客户端显式 `response.create`；请求携带 `tool_choice:auto`。
-- 工具结果后的 response slot 存在短暂 busy 竞态，adapter 保存 raw refusal 并做 1.2s/2.6s/5s 有界重试。
-- 单工具 profile 在首轮后尝试切换 `tool_choice:none`，但当前模型仍会自动重复一次相同工具调用。该行为保留为评测结果。
+- smart-turn 实际回显 2000ms 静音窗口，输入 profile 使用 2400ms 尾静音。服务端在话轮结束后自动创建首轮 response，客户端不能再为同一 user item 补发 `response.create`。
+- 首轮使用 session `tool_choice:auto`。收到工具调用后，客户端发送 `function_call_output`，再显式创建一次工具后续 response，并在 response 级携带 `tool_choice:none`。
+- 工具结果后的 response slot 可能存在短暂 busy 竞态，adapter 保存 raw refusal 并做 1.2s/2.6s/5s 有界重试。
+- adapter 0.4.0 曾错误请求 `create_response:false`；服务端未回显该字段，代码却在已自动首答后再次发送 `response.create`，导致每条多出一个工具 response。0.4.1 已按官方 Smart Cockpit 时序移除这次请求。
 
 配置分别位于 `configs/qwen-audio-3.0-realtime-flash-agent.yaml` 和 `configs/qwen-audio3-smart-turn.yaml`。
+时序依据固定为 QwenAudio 官方仓库 commit `149440d01d5f3ff4feaf2c6f904d05e6ac81d499` 的 [Smart Cockpit runner](https://github.com/QwenAudio/qwen-audio-agent/blob/149440d01d5f3ff4feaf2c6f904d05e6ac81d499/examples/smart-cockpit/bench/runner/run-realtime.mjs)，其中 smart-turn 输入只推送音频和静音，工具结果经 `sendFunctionOutput` 回注后才创建后续 response。
 
 ## 4. 准备 Smoke Suite
 
@@ -76,20 +77,21 @@ scenarios/agent/cockpit_compiled/cockpit_audio3_flash_smoke_v1/
 
 ## 5. 2026-09-21 实测结果
 
-完整工件位于 `runs/qwen-audio3-cockpit-smoke-20260921-001/`。5 条均完成音频输入、Function Call、确定性工具结果回传和最终语音播放，eligible=5、invalid=0。
+历史工件 `runs/qwen-audio3-cockpit-smoke-20260921-001/` 的5条均出现两次相同调用，严格 Task Completion 0/5。原始日志和 `eval_dce531cd2a086d329206` 保留，但官方时序核验及 raw wire 证明，首个 `response.created` 早于客户端额外发送的首轮 `response.create`；第二个工具 response 是 adapter 错误时序造成的污染，不能归因为模型重复调用率。
 
-| 指标 | 结果 |
+0.4.1 修复后的完整 suite 工件为 `runs/qwen-audio3-cockpit-smoke-20260921-002/`：attempted=5、eligible=4、invalid=1、Task Completion=3/4，4个eligible均只有一次工具调用。目标电量 case 因 `input_deadline_missed_before_send` 保留为invalid；随后只对该invalid建立独立重试 `runs/qwen-audio3-cockpit-target-battery-retry-20260921-001/`，结果eligible/pass且只有一次调用。
+
+| 修复后指标 | 结果 |
 |---|---:|
 | First Call Tool Accuracy | 5/5 = 100% |
-| First Call Argument Accuracy | 5/5 = 100% |
-| Redundant Identical Call Rate | 5/5 = 100% |
-| Exact Tool Selection Accuracy | 0/5 |
-| Exact Sequence Accuracy | 0/5 |
-| Strict Task Completion Rate | 0/5 |
+| First Call Argument Accuracy | 4/5 = 80% |
+| Redundant Identical Call Rate | 0/5 = 0% |
+| Exact Tool Selection Accuracy | 5/5 = 100% |
+| Strict Task Completion Rate | 4/5 = 80% |
 
-每条的第一次调用都与白名单函数名和参数完全一致，之后又以新 call_id 重复同一个调用一次。最终口语回复分别正确确认强能量回收、40% 多媒体音量、中等悬架、性能驾驶模式和 80% 目标电量。重复动作仍违反严格单工具 oracle，因此不能把这些 case 改判为 pass。
+这里的5个eligible样本由主 run 的4个eligible和目标电量独立重试组成，不改写主 run 的invalid。唯一失败是悬架 case：服务端转写为“把高度悬架高度调到中子。”，模型调用正确函数但额外传入 schema 不允许的 `action=SET`，确定性后端返回失败，最终口播也如实说明失败。
 
-离线重评 ID 为 `eval_dce531cd2a086d329206`，重复评价不调用模型或工具服务。
+主 run 离线重评 ID 为 `eval_0ad5644653947a034537`，目标电量重试为 `eval_5e5fe97e857a1e546489`；重复评价 ID 均不变，且未调用模型或工具服务。
 
 ## 6. 批量分片
 
