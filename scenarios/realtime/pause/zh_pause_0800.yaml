@@ -1,0 +1,81 @@
+schema_version: '0.1'
+scenario_id: zh_pause_0800
+scenario_version: 1
+suite: realtime
+category: pause
+language: zh-CN
+tags:
+- clean
+- frozen_tts
+- automatic_boundary
+- derived_audio
+seed: 17
+world:
+  now: '2026-09-19T10:00:00+08:00'
+  timezone: Asia/Shanghai
+capabilities_required:
+- audio_input
+- audio_output
+- streaming_output
+- server_vad
+session:
+  system_prompt: 请用一句简短、自然的中文回答用户。
+  turn_mode: server_vad
+  control_profile: native_server
+audio:
+  input_encoding: pcm_s16le
+  channels: 1
+  chunk_ms: 20
+  assets:
+    question:
+      path: datasets/audio/duplex/zh_pause_0800.wav
+      sha256: 3a95891b439069c975157bcf230341497770e6575db3bdfa1945610bd0818ab4
+      reference_text: 请用一句话介绍北京。
+      speech_bounds_samples:
+      - 960
+      - 39040
+      sample_rate_hz: 16000
+      provenance:
+        kind: frozen_tts
+        speaker_id: Cherry
+        generator: qwen3-tts-flash
+      boundary_annotation:
+        method: energy_rms_v1
+        status: automatic
+        resolution_ms: 20
+        parameters:
+          window_ms: 20
+          threshold_pcm_rms: 58.84294274273679
+          guard_windows: 1
+          semantic_error_bound: null
+      regions:
+      - region_id: pause_1
+        kind: pause
+        bounds_samples:
+        - 13440
+        - 26240
+      derivation:
+        operation: insert_silence
+        source_path: datasets/audio/latency/zh_latency_003.wav
+        source_sha256: ea4b1e209d743c381cd26dbba185975c52124038caf3ea6380eb3726a05cbf38
+        insert_sample: 13440
+        inserted_samples: 12800
+        natural_pause: false
+actions:
+- action_id: ask
+  type: play_audio
+  asset: question
+  turn_id: t1
+  trigger:
+    type: session_ready
+oracle:
+  hidden_from_model: true
+  stimulus: pause
+  metric_profile: duplex_v0_2
+  assertions:
+  - type: audio_received
+termination:
+  max_case_duration_ms: 60000
+  response_timeout_ms: 15000
+  post_stimulus_observation_ms: 5000
+  drain_timeout_ms: 15000

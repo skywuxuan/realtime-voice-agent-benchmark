@@ -1,0 +1,80 @@
+schema_version: '0.1'
+scenario_id: zh_agent_multistep_200ms_001
+scenario_version: 1
+world:
+  now: '2026-09-19T10:00:00+08:00'
+  timezone: Asia/Shanghai
+user_turns:
+- 请先查询二零二六年九月二十日上海到天津的高铁，再把查到的第一趟车的出发和到达时间建成一条日历活动，活动标题就用车次号。
+turn_assets:
+- t1
+audio_assets:
+  t1:
+    path: datasets/audio/agent/zh_agent_multistep_001_t1.wav
+    sha256: 82a4ee4dd0066063c9e3346ce115d7bfdbf22be1589cd451b69c437a044d47b7
+    reference_text: 请先查询二零二六年九月二十日上海到天津的高铁，再把查到的第一趟车的出发和到达时间建成一条日历活动，活动标题就用车次号。
+    speech_bounds_samples:
+    - 960
+    - 204800
+    sample_rate_hz: 16000
+    provenance:
+      kind: frozen_tts
+      speaker_id: Cherry
+      generator: qwen3-tts-flash
+    boundary_annotation:
+      method: energy_rms_v1
+      status: automatic
+      resolution_ms: 20
+      parameters:
+        window_ms: 20
+        threshold_pcm_rms: 72.67906829858237
+        guard_windows: 1
+        semantic_error_bound: null
+argument_comparison: typed_iso8601
+tools_enabled:
+- train
+- calendar
+tags:
+- multi_step
+- transport_200ms
+expected_calls:
+- step_id: search
+  tool: train
+  arguments:
+    from_city: 上海
+    to_city: 天津
+    date: '2026-09-20'
+- step_id: create
+  tool: calendar
+  depends_on:
+  - search
+  arguments:
+    operation: create
+    title:
+      $result:
+        step: search
+        path:
+        - trains
+        - 0
+        - train_no
+    start:
+      $result:
+        step: search
+        path:
+        - trains
+        - 0
+        - depart_at
+    end:
+      $result:
+        step: search
+        path:
+        - trains
+        - 0
+        - arrive_at
+expected_final_state:
+  calendar_events:
+  - event_id: event_001
+    title: G2
+    start: '2026-09-20T08:12:00'
+    end: '2026-09-20T12:04:00'
+input_chunk_ms: 200

@@ -1,0 +1,9 @@
+schema_version: '0.1'
+suite_id: zh_pause_v1
+cases:
+- pause/zh_pause_0200.yaml
+- pause/zh_pause_0500.yaml
+- pause/zh_pause_0800.yaml
+- pause/zh_pause_1200.yaml
+- pause/zh_pause_2000.yaml
+repetitions: 1

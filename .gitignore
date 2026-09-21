@@ -1,0 +1,21 @@
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.env
+.env.*
+!.env.example
+runs/
+
+# Generated benchmark assets and compiled test sets. Recreate with the dataset
+# preparation commands documented in docs/text-dataset.md and docs/cockpit-benchmark.md.
+datasets/audio/
+datasets/rendered/
+datasets/catalogs/
+scenarios/compiled/
+scenarios/agent/cockpit_compiled/
+reports/cockpit-source-audit*.json

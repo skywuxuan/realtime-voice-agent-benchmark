@@ -1,0 +1,14 @@
+schema_version: '0.1'
+suite_id: zh_latency_basic_v1
+cases:
+- latency/zh_latency_001.yaml
+- latency/zh_latency_002.yaml
+- latency/zh_latency_003.yaml
+- latency/zh_latency_004.yaml
+- latency/zh_latency_005.yaml
+- latency/zh_latency_006.yaml
+- latency/zh_latency_007.yaml
+- latency/zh_latency_008.yaml
+- latency/zh_latency_009.yaml
+- latency/zh_latency_010.yaml
+repetitions: 1

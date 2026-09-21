@@ -1,0 +1,5 @@
+schema_version: '0.1'
+suite_id: zh_backchannel_basic_v1
+cases:
+- backchannel/zh_backchannel_001.yaml
+repetitions: 1

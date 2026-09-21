@@ -1,0 +1,27 @@
+# Oracle template: add frozen audio_assets/turn_assets before a live run.
+schema_version: '0.1'
+scenario_id: agent_calendar_failure
+scenario_version: 2
+model: fixture
+user_turns:
+- 请创建明天十点到十一点的会议。
+tools_enabled:
+- calendar
+failure_schedule:
+- tool: calendar
+  invocation: 1
+  kind: http_500
+expected_calls:
+- tool: calendar
+  arguments:
+    operation: create
+    title: 会议
+    start: 2026-09-20T10:00
+    end: 2026-09-20T11:00
+expected_final_state:
+  calendar_events:
+  - event_id: event_001
+    title: 会议
+    start: 2026-09-20T10:00
+    end: 2026-09-20T11:00
+allow_retries: true

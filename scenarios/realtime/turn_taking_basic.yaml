@@ -1,0 +1,5 @@
+schema_version: '0.1'
+suite_id: zh_turn_taking_v1
+cases:
+- turn_taking/zh_turn_taking_001.yaml
+repetitions: 1

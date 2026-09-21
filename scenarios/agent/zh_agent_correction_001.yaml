@@ -1,0 +1,83 @@
+schema_version: '0.1'
+scenario_id: zh_agent_correction_001
+scenario_version: 1
+world:
+  now: '2026-09-19T10:00:00+08:00'
+  timezone: Asia/Shanghai
+user_turns:
+- 请查询二零二六年九月二十日上海去北京的高铁。
+- 等一下，目的地不是北京，改成天津，日期不变。
+turn_assets:
+- t1
+- t2
+audio_assets:
+  t1:
+    path: datasets/audio/agent/zh_agent_correction_001_t1.wav
+    sha256: be64cbe0c718296bc74e46826ba331bc155a519ca1086583a5087aa07dfafb5e
+    reference_text: 请查询二零二六年九月二十日上海去北京的高铁。
+    speech_bounds_samples:
+    - 960
+    - 69120
+    sample_rate_hz: 16000
+    provenance:
+      kind: frozen_tts
+      speaker_id: Cherry
+      generator: qwen3-tts-flash
+    boundary_annotation:
+      method: energy_rms_v1
+      status: automatic
+      resolution_ms: 20
+      parameters:
+        window_ms: 20
+        threshold_pcm_rms: 65.31135474354747
+        guard_windows: 1
+        semantic_error_bound: null
+  t2:
+    path: datasets/audio/agent/zh_agent_correction_001_t2.wav
+    sha256: 52fa7bad604c2d2f1175480613295c266ffad797317757360f6c0a347258ba63
+    reference_text: 等一下，目的地不是北京，改成天津，日期不变。
+    speech_bounds_samples:
+    - 960
+    - 65920
+    sample_rate_hz: 16000
+    provenance:
+      kind: frozen_tts
+      speaker_id: Cherry
+      generator: qwen3-tts-flash
+    boundary_annotation:
+      method: energy_rms_v1
+      status: automatic
+      resolution_ms: 20
+      parameters:
+        window_ms: 20
+        threshold_pcm_rms: 68.53243710326154
+        guard_windows: 1
+        semantic_error_bound: null
+argument_comparison: typed_iso8601
+tools_enabled:
+- train
+tags:
+- correction
+- inflight_read_only
+expected_calls:
+- tool: train
+  arguments:
+    from_city: 上海
+    to_city: 北京
+    date: '2026-09-20'
+- tool: train
+  arguments:
+    from_city: 上海
+    to_city: 天津
+    date: '2026-09-20'
+expected_final_state:
+  calendar_events: []
+turn_triggers:
+- type: after_tool_start
+  tool: train
+  occurrence: 1
+  delay_ms: 150
+tool_delays:
+- tool: train
+  invocation: 1
+  delay_ms: 8000

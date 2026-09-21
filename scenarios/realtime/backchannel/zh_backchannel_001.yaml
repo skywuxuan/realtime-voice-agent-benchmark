@@ -1,0 +1,105 @@
+schema_version: '0.1'
+scenario_id: zh_backchannel_001
+scenario_version: 1
+suite: realtime
+category: backchannel
+language: zh-CN
+tags:
+- clean
+- synthetic_fixture
+- listener_backchannel
+seed: 23
+world:
+  now: '2026-09-19T10:00:00+08:00'
+  timezone: Asia/Shanghai
+capabilities_required:
+- audio_input
+- audio_output
+- streaming_input
+- streaming_output
+- server_vad
+session:
+  system_prompt: 请自然、简洁地交流。
+  turn_mode: server_vad
+  control_profile: native_server
+audio:
+  input_encoding: pcm_s16le
+  channels: 1
+  chunk_ms: 20
+  assets:
+    initial:
+      path: datasets/audio/interruption/zh_interruption_001_initial.wav
+      sha256: aacb5d88c8915c961a1cbb8fbcea2e1a1f32fa79ca52d0b16ed5128e75b1c83f
+      reference_text: 请介绍北京适合周末游玩的地方。
+      speech_bounds_samples:
+      - 960
+      - 109760
+      sample_rate_hz: 16000
+      provenance:
+        kind: frozen_tts
+        speaker_id: Cherry
+        generator: qwen3-tts-flash
+      boundary_annotation:
+        method: energy_rms_v1
+        status: automatic
+        resolution_ms: 20
+        parameters: {}
+    backchannel:
+      path: datasets/audio/backchannel/zh_backchannel_001_backchannel.wav
+      sha256: 05a2366d3fb920cbf1bd8489884fc52da68a02f266534f078a8ffe2621fd687d
+      reference_text: 嗯嗯
+      speech_bounds_samples:
+      - 0
+      - 4800
+      sample_rate_hz: 16000
+      provenance:
+        kind: synthetic_fixture
+        speaker_id: fixture
+        generator: sine330
+      boundary_annotation:
+        method: fixture
+        status: synthetic
+        resolution_ms: 20
+        parameters: {}
+actions:
+- action_id: ask
+  type: play_audio
+  asset: initial
+  turn_id: t1
+  stimulus: utterance
+  trigger:
+    type: session_ready
+- action_id: ack
+  type: play_audio
+  asset: backchannel
+  turn_id: t2
+  stimulus: backchannel
+  trigger:
+    type: after_event
+    event: assistant_playback_start
+    where:
+      turn_id: t1
+    occurrence: 1
+    bind:
+      target_response_id: response_id
+    delay_ms: 350
+    timeout_ms: 20000
+  preconditions:
+  - type: response_still_playing
+    response: $target_response_id
+  - type: response_still_generating
+    response: $target_response_id
+  - type: minimum_continuation_evidence
+    remaining_ms: 200
+oracle:
+  hidden_from_model: true
+  stimulus: backchannel
+  expected_new_intent: {}
+  metric_profile: backchannel_v0_1
+  assertions:
+  - type: continues_response
+termination:
+  max_case_duration_ms: 90000
+  response_timeout_ms: 20000
+  post_stimulus_observation_ms: 20000
+  drain_timeout_ms: 60000

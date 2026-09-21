@@ -1,0 +1,67 @@
+schema_version: '0.1'
+scenario_id: zh_latency_004
+scenario_version: 1
+suite: realtime
+category: latency
+language: zh-CN
+tags:
+- clean
+- frozen_tts
+- automatic_boundary
+seed: 17
+world:
+  now: '2026-09-19T10:00:00+08:00'
+  timezone: Asia/Shanghai
+capabilities_required:
+- audio_input
+- audio_output
+- streaming_output
+- server_vad
+session:
+  system_prompt: 请用一句简短、自然的中文回答用户。
+  turn_mode: server_vad
+  control_profile: native_server
+audio:
+  input_encoding: pcm_s16le
+  channels: 1
+  chunk_ms: 20
+  assets:
+    question:
+      path: datasets/audio/latency/zh_latency_004.wav
+      sha256: 38b10aeab7c571817d375eebf031c695bd0634749796e9481626631026491f49
+      reference_text: 请告诉我，熊猫通常吃什么？
+      speech_bounds_samples:
+      - 960
+      - 39680
+      sample_rate_hz: 16000
+      provenance:
+        kind: frozen_tts
+        speaker_id: Cherry
+        generator: qwen3-tts-flash
+      boundary_annotation:
+        method: energy_rms_v1
+        status: automatic
+        resolution_ms: 20
+        parameters:
+          window_ms: 20
+          threshold_pcm_rms: 62.6508739987919
+          guard_windows: 1
+          semantic_error_bound: null
+actions:
+- action_id: ask
+  type: play_audio
+  asset: question
+  turn_id: t1
+  trigger:
+    type: session_ready
+oracle:
+  hidden_from_model: true
+  stimulus: utterance
+  metric_profile: latency_v0_1
+  assertions:
+  - type: audio_received
+termination:
+  max_case_duration_ms: 60000
+  response_timeout_ms: 15000
+  post_stimulus_observation_ms: 5000
+  drain_timeout_ms: 15000

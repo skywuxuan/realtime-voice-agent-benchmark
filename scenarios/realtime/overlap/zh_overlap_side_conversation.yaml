@@ -1,0 +1,86 @@
+schema_version: '0.1'
+scenario_id: zh_overlap_side_conversation
+scenario_version: 1
+suite: realtime
+category: overlap
+language: zh-CN
+tags:
+- mixed_speech
+- frozen_tts
+- automatic_boundary
+- derived_audio
+seed: 17
+world:
+  now: '2026-09-19T10:00:00+08:00'
+  timezone: Asia/Shanghai
+capabilities_required:
+- audio_input
+- audio_output
+- streaming_output
+- server_vad
+session:
+  system_prompt: 请用一句简短、自然的中文回答用户。
+  turn_mode: server_vad
+  control_profile: native_server
+audio:
+  input_encoding: pcm_s16le
+  channels: 1
+  chunk_ms: 20
+  assets:
+    question:
+      path: datasets/audio/duplex/zh_overlap_side_conversation.wav
+      sha256: 7217d3176c1c3fdcd0ae2486208c9088b6ef6cac1d5dde083fa36e02a4d3e48c
+      reference_text: 请用一句话介绍北京。
+      speech_bounds_samples:
+      - 960
+      - 26240
+      sample_rate_hz: 16000
+      provenance:
+        kind: frozen_tts
+        speaker_id: Cherry
+        generator: qwen3-tts-flash
+      boundary_annotation:
+        method: energy_rms_v1
+        status: automatic
+        resolution_ms: 20
+        parameters:
+          window_ms: 20
+          threshold_pcm_rms: 58.84294274273679
+          guard_windows: 1
+          semantic_error_bound: null
+      regions:
+      - region_id: background_1
+        kind: interferer
+        subtype: side_conversation
+        bounds_samples:
+        - 2560
+        - 22720
+      derivation:
+        operation: mix_pcm16
+        target_path: datasets/audio/latency/zh_latency_003.wav
+        target_sha256: ea4b1e209d743c381cd26dbba185975c52124038caf3ea6380eb3726a05cbf38
+        interferer_path: datasets/audio/latency/zh_latency_002.wav
+        interferer_sha256: 214fe8067d275a402dc6d85b75f01e0ac0da05487680f2d3cba60dbe2ece9973
+        target_gain: 0.7
+        interferer_gain: 0.3
+        interferer_offset_samples: 1600
+        recipe_version: linear_gain_round_clip_v1
+        speaker_variation: false
+actions:
+- action_id: ask
+  type: play_audio
+  asset: question
+  turn_id: t1
+  trigger:
+    type: session_ready
+oracle:
+  hidden_from_model: true
+  stimulus: overlap
+  metric_profile: duplex_v0_2
+  assertions:
+  - type: audio_received
+termination:
+  max_case_duration_ms: 60000
+  response_timeout_ms: 15000
+  post_stimulus_observation_ms: 5000
+  drain_timeout_ms: 15000

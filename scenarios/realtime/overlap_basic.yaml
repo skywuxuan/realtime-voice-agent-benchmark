@@ -1,0 +1,7 @@
+schema_version: '0.1'
+suite_id: zh_overlap_v1
+cases:
+- overlap/zh_overlap_ambient_speech.yaml
+- overlap/zh_overlap_side_conversation.yaml
+- overlap/zh_overlap_simultaneous_speech.yaml
+repetitions: 1

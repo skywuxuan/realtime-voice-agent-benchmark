@@ -1,0 +1,7 @@
+schema_version: '0.1'
+suite_id: qwen_agent_advanced_v1
+cases:
+- zh_agent_multistep_200ms_001.yaml
+- zh_agent_retry_001.yaml
+- zh_agent_correction_001.yaml
+repetitions: 1

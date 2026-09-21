@@ -1,0 +1,5 @@
+schema_version: '0.1'
+suite_id: zh_interruption_basic_v1
+cases:
+- interruption/zh_interruption_001.yaml
+repetitions: 1

@@ -1,0 +1,48 @@
+schema_version: '0.1'
+scenario_id: zh_agent_retry_001
+scenario_version: 1
+world:
+  now: '2026-09-19T10:00:00+08:00'
+  timezone: Asia/Shanghai
+user_turns:
+- 请查询二零二六年九月二十日上海的天气。
+turn_assets:
+- question
+audio_assets:
+  question:
+    path: datasets/audio/agent/zh_agent_weather_001.wav
+    sha256: 563ab795412fcb5cdb415d401cc83543f7970a20de0b7f94aeb65ce05f0f57d1
+    reference_text: 请查询二零二六年九月二十日上海的天气。
+    speech_bounds_samples:
+    - 960
+    - 57600
+    sample_rate_hz: 16000
+    provenance:
+      kind: frozen_tts
+      speaker_id: Cherry
+      generator: qwen3-tts-flash
+    boundary_annotation:
+      method: energy_rms_v1
+      status: automatic
+      resolution_ms: 20
+      parameters:
+        window_ms: 20
+        threshold_pcm_rms: 68.36972335672421
+        guard_windows: 1
+        semantic_error_bound: null
+argument_comparison: typed_iso8601
+tools_enabled:
+- weather
+tags:
+- tool_failure
+expected_calls:
+- tool: weather
+  arguments:
+    city: 上海
+    date: '2026-09-20'
+expected_final_state:
+  calendar_events: []
+failure_schedule:
+- tool: weather
+  invocation: 1
+  kind: http_500

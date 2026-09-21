@@ -1,0 +1,17 @@
+schema_version: '0.1'
+scenario_id: agent_train_single
+scenario_version: 1
+model: fixture
+user_turns:
+  - 上海到北京的高铁有哪些？
+tools_enabled: [train]
+world:
+  now: '2026-09-19T10:00:00+08:00'
+expected_calls:
+  - tool: train
+    arguments:
+      from_city: 上海
+      to_city: 北京
+      date: '2026-09-20'
+expected_final_state:
+  calendar_events: []
