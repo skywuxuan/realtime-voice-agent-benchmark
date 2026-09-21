@@ -1,0 +1,18 @@
+kind: text_corpus
+schema_version: '0.1'
+dataset_id: half_duplex_text_corpus_v1
+mode: half_duplex
+category: latency
+world:
+  now: '2026-09-21T10:00:00+08:00'
+  timezone: Asia/Shanghai
+session:
+  system_prompt: 请用一句简短、自然的中文回答用户。
+  turn_mode: server_vad
+  control_profile: native_server
+tts_profile: qwen3_tts_flash_cherry_16k_v1
+cases:
+  - id: text_half_name_001
+    text: 你好，请问你叫什么名字？
+  - id: text_half_math_001
+    text: 一加一等于几？

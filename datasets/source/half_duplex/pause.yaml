@@ -1,0 +1,31 @@
+kind: text_scenario
+schema_version: '0.1'
+scenario_id: text_pause_0800_001
+scenario_version: 1
+mode: half_duplex
+category: pause
+language: zh-CN
+tags: [clean, text_source, explicit_pause]
+seed: 17
+world:
+  now: '2026-09-21T10:00:00+08:00'
+  timezone: Asia/Shanghai
+session:
+  system_prompt: 请用一句简短、自然的中文回答用户。
+  turn_mode: server_vad
+  control_profile: native_server
+tts_profile: qwen3_tts_flash_cherry_16k_v1
+actions:
+  - action_id: ask
+    turn_id: t1
+    behavior: utterance
+    speech:
+      segments:
+        - type: text
+          text: 帮我查一下
+        - type: silence
+          duration_ms: 800
+        - type: text
+          text: 明天下午上海到北京的高铁
+    trigger:
+      type: session_ready

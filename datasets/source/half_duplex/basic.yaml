@@ -1,0 +1,30 @@
+kind: text_dataset
+schema_version: '0.1'
+dataset_id: half_duplex_basic_v1
+repetitions: 1
+cases:
+  - kind: text_scenario
+    schema_version: '0.1'
+    scenario_id: text_latency_beijing_001
+    scenario_version: 1
+    mode: half_duplex
+    category: latency
+    language: zh-CN
+    tags: [clean, text_source]
+    seed: 17
+    world:
+      now: '2026-09-21T10:00:00+08:00'
+      timezone: Asia/Shanghai
+    session:
+      system_prompt: 请用一句简短、自然的中文回答用户。
+      turn_mode: server_vad
+      control_profile: native_server
+    tts_profile: qwen3_tts_flash_cherry_16k_v1
+    actions:
+      - action_id: ask
+        turn_id: t1
+        behavior: utterance
+        speech:
+          text: 请用一句话介绍北京。
+        trigger:
+          type: session_ready

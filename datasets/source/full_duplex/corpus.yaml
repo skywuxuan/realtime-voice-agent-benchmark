@@ -1,0 +1,23 @@
+kind: text_corpus
+schema_version: '0.1'
+dataset_id: full_duplex_text_corpus_v1
+mode: full_duplex
+category: interruption
+world:
+  now: '2026-09-21T10:00:00+08:00'
+  timezone: Asia/Shanghai
+session:
+  system_prompt: 请用自然、简洁的中文交流。
+  turn_mode: server_vad
+  control_profile: native_server
+tts_profile: qwen3_tts_flash_cherry_16k_v1
+trigger_delay_ms: 350
+trigger_timeout_ms: 20000
+minimum_continuation_ms: 800
+cases:
+  - id: text_full_city_001
+    initial_text: 请详细介绍北京适合周末游玩的地方，至少说三个。
+    stimulus_text: 等一下，不是北京，我想问上海。
+    tags: [correction]
+    expected_new_intent:
+      city: 上海
