@@ -1,0 +1,22 @@
+model: qwen3.5-omni-flash-realtime
+voice: Tina
+input_audio:
+  encoding: pcm_s16le
+  sample_rate_hz: 16000
+  channels: 1
+output_audio:
+  encoding: pcm_s16le
+  sample_rate_hz: 24000
+  channels: 1
+system_prompt: 请用一句简短、自然的中文回答用户。
+turn_mode: server_vad
+control_profile: native_server
+temperature: null
+vad:
+  threshold: 0.5
+  prefix_padding_ms: 300
+  silence_duration_ms: 800
+  create_response: true
+  interrupt_response: true
+sampling: {}
+provider_options: {}

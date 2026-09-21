@@ -1,0 +1,18 @@
+model: qwen-audio-3.0-realtime-flash
+voice: longanqian
+input_audio:
+  encoding: pcm_s16le
+  sample_rate_hz: 16000
+  channels: 1
+output_audio:
+  encoding: pcm_s16le
+  sample_rate_hz: 24000
+  channels: 1
+system_prompt: ''
+turn_mode: server_vad
+control_profile: native_server
+temperature: null
+vad: {}
+sampling: {}
+provider_options:
+  tool_followup_choice: none
