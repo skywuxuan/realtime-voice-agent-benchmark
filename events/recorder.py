@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from benchmark.audio import AudioFormat, AudioRef
-from benchmark.contracts import canonical_json
+from benchmark.contracts import canonical_json, pretty_json
 from events.clock import Clock, ClockReading, SystemClock
 from events.redaction import Redactor
 from events.replay import RecordingError, artifact_path, file_hash, read_recording
@@ -76,7 +76,7 @@ class EventRecorder:
         (self.root / "raw_events.jsonl").touch(exist_ok=False)
         clean_config, _ = self.redactor.clean(self.config)
         (self.root / "config.json").write_text(
-            canonical_json(clean_config) + "\n", encoding="utf-8"
+            pretty_json(clean_config), encoding="utf-8"
         )
         self._opened = True
         self._write_manifest("recording", None, hash_files=False)
@@ -199,7 +199,7 @@ class EventRecorder:
         if not name.endswith(".json"):
             raise ValueError("JSON sidecar must have a .json suffix")
         clean, _ = self.redactor.clean(value)
-        data = (canonical_json(clean) + "\n").encode("utf-8")
+        data = pretty_json(clean).encode("utf-8")
         async with self._lock:
             self._require_open()
             await self._io(self._write_sidecar, name, data)
@@ -250,7 +250,7 @@ class EventRecorder:
         }
         temp = self.root / "manifest.json.tmp"
         with temp.open("w", encoding="utf-8") as stream:
-            stream.write(canonical_json(manifest) + "\n")
+            stream.write(pretty_json(manifest))
             stream.flush()
             os.fsync(stream.fileno())
         temp.replace(self.root / "manifest.json")

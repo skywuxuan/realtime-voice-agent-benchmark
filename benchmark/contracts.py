@@ -35,5 +35,9 @@ def canonical_json(value: object) -> str:
     )
 
 
+def pretty_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
+
+
 def content_hash(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()

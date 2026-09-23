@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from benchmark.config import LatencyProfile
-from benchmark.contracts import canonical_json, content_hash
+from benchmark.contracts import content_hash, pretty_json
 from evaluator.backchannel import EVALUATOR_VERSION as BACKCHANNEL_EVALUATOR_VERSION
 from evaluator.backchannel import aggregate as aggregate_backchannel
 from evaluator.backchannel import evaluate_case as evaluate_backchannel_case
@@ -126,12 +126,12 @@ def evaluate_run(root: Path, *, profile: LatencyProfile | None = None) -> dict:
     directory = root / "evaluations" / evaluation_id
     directory.mkdir(parents=True, exist_ok=True)
     for name, data in (("config.json", evaluation_config), ("metrics.json", result)):
-        payload = canonical_json(data) + "\n"
+        payload = pretty_json(data)
         path = directory / name
         if path.exists() and path.read_text() != payload:
             raise ValueError("same evaluation identity produced different output")
         path.write_text(payload, encoding="utf-8")
-    (root / "metrics.json").write_text(canonical_json(result) + "\n", encoding="utf-8")
+    (root / "metrics.json").write_text(pretty_json(result), encoding="utf-8")
     from reports.html import write as write_html_report
 
     write_html_report(root / "metrics.json", root / "report.html")

@@ -10,7 +10,7 @@ from tempfile import NamedTemporaryFile
 import yaml
 
 from benchmark.audio import AudioFormat
-from benchmark.contracts import canonical_json, content_hash
+from benchmark.contracts import content_hash, pretty_json
 from dataset.schema import (
     SilenceSegment,
     TextCorpus,
@@ -210,7 +210,7 @@ class RenderCache:
         }
         wav_path, metadata_path = self._paths(render_id)
         _write_immutable(wav_path, wav)
-        _write_immutable(metadata_path, (canonical_json(metadata) + "\n").encode("utf-8"))
+        _write_immutable(metadata_path, pretty_json(metadata).encode("utf-8"))
         return CachedAudio(
             render_id,
             wav_path,
@@ -511,7 +511,7 @@ def compile_dataset(
         ),
     )
     source_path = directory / "source.json"
-    _write_immutable(source_path, (canonical_json(source_data) + "\n").encode("utf-8"))
+    _write_immutable(source_path, pretty_json(source_data).encode("utf-8"))
     manifest = {
         "schema_version": "0.1",
         "kind": "compiled_text_dataset",
@@ -530,7 +530,7 @@ def compile_dataset(
         },
     }
     manifest_path = directory / "manifest.json"
-    _write_immutable(manifest_path, (canonical_json(manifest) + "\n").encode("utf-8"))
+    _write_immutable(manifest_path, pretty_json(manifest).encode("utf-8"))
     load_suite(suite_path, asset_root=asset_root)
     return CompilationResult(
         suite_path,

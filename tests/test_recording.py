@@ -5,6 +5,7 @@ import threading
 import pytest
 
 from benchmark.audio import AudioFormat
+from benchmark.contracts import canonical_json, content_hash, pretty_json
 from events.recorder import EventRecorder
 from events.replay import RecordingError, read_recording
 from events.schema import RawEvent
@@ -12,7 +13,9 @@ from events.schema import RawEvent
 
 def test_record_replay_audio_raw_ids_and_observation_time(tmp_path, context, clock, event):
     async def run():
-        async with EventRecorder(tmp_path / "case", context, clock=clock) as recorder:
+        async with EventRecorder(
+            tmp_path / "case", context, clock=clock, config={"prompt": "中文提示词"}
+        ) as recorder:
             await recorder.record(event("session_start"))
             raw = await recorder.record_raw(
                 RawEvent(
@@ -46,8 +49,23 @@ def test_record_replay_audio_raw_ids_and_observation_time(tmp_path, context, clo
         assert recording.events[1].payload.late_after_cancel is True
         assert recording.raw_events[0].body["keep_me"] == {"a": 1}
         assert read_recording(tmp_path / "case").events == recording.events
+        assert (tmp_path / "case" / "config.json").read_text().startswith("{\n  ")
+        assert (tmp_path / "case" / "manifest.json").read_text().startswith("{\n  ")
+        events = (tmp_path / "case" / "events.jsonl").read_text().splitlines()
+        assert len(events) == len(recording.events)
+        assert all(line.startswith("{") and not line.startswith("{ ") for line in events)
 
     asyncio.run(run())
+
+
+def test_pretty_json_is_readable_without_changing_content_hash():
+    data = {"prompt": "中文提示词", "tools": [{"name": "setVolume", "value": 40}]}
+    display = pretty_json(data)
+    assert display.startswith("{\n  ") and display.endswith("\n")
+    assert "中文提示词" in display and "\\u4e2d" not in display
+    assert "\n" not in canonical_json(data)
+    assert json.loads(display) == data
+    assert content_hash(json.loads(display)) == content_hash(data)
 
 
 def test_concurrent_writers_have_gap_free_sequences(tmp_path, context, clock, event):

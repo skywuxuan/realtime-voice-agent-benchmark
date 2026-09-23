@@ -1,10 +1,11 @@
 """Offline Agent evaluation with sealed evidence, state replay and versioned outputs."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
-from benchmark.contracts import canonical_json, content_hash
+from benchmark.contracts import canonical_json, content_hash, pretty_json
 from evaluator.agent import EVALUATOR_VERSION, evaluate_observations
 from events.replay import RecordingError, file_hash, read_recording
 from reports.html import render
@@ -34,9 +35,13 @@ def evaluate(root: Path):
     if scenario.tool_backend == "protocol_ack_v1":
         catalog_data = load("tool_catalog.json")
         catalog = ToolCatalog.model_validate(catalog_data)
+        compact_digest = hashlib.sha256(
+            (canonical_json(catalog_data) + "\n").encode("utf-8")
+        ).hexdigest()
         if (
             catalog.catalog_id != scenario.tool_catalog.catalog_id
-            or file_hash(root / "tool_catalog.json") != scenario.tool_catalog.sha256
+            or scenario.tool_catalog.sha256
+            not in {file_hash(root / "tool_catalog.json"), compact_digest}
         ):
             raise RecordingError("sealed tool catalog differs from scenario reference")
         replay = ProtocolToolServer(catalog, enabled=scenario.tools_enabled)
@@ -175,12 +180,12 @@ def evaluate(root: Path):
     out = root / "evaluations" / result["evaluation_id"]
     out.mkdir(parents=True, exist_ok=True)
     for name, data in (("config.json", identity), ("metrics.json", result)):
-        text = canonical_json(data) + "\n"
+        text = pretty_json(data)
         path = out / name
         if path.exists() and path.read_text() != text:
             raise RecordingError("same evaluation identity changed result")
         path.write_text(text)
-    (root / "metrics.json").write_text(canonical_json(result) + "\n")
+    (root / "metrics.json").write_text(pretty_json(result), encoding="utf-8")
     (root / "report.html").write_text(render(result, title="Voice Agent Benchmark"))
     return result
 
@@ -240,12 +245,12 @@ def evaluate_suite(root: Path):
     directory = root / "evaluations" / evaluation_id
     directory.mkdir(parents=True, exist_ok=True)
     for name, data in (("config.json", identity), ("metrics.json", result)):
-        payload = canonical_json(data) + "\n"
+        payload = pretty_json(data)
         path = directory / name
         if path.exists() and path.read_text() != payload:
             raise RecordingError("evaluation identity collision")
         path.write_text(payload)
-    (root / "metrics.json").write_text(canonical_json(result) + "\n")
+    (root / "metrics.json").write_text(pretty_json(result), encoding="utf-8")
     (root / "report.html").write_text(render(result, title="Voice Agent Benchmark"))
     return result
 
