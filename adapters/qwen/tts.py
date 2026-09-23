@@ -6,15 +6,18 @@ Offline preparation only. This client is not a realtime adapter.
 import http.client
 import json
 import os
+import time
 from urllib.parse import urlsplit
 
-from adapters.qwen.config import SDK_SOURCE
-
 ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
-SOURCE = SDK_SOURCE.rsplit("/dashscope/", 1)[0] + "/dashscope/aigc/multimodal_conversation.py"
+SOURCE = (
+    "https://github.com/dashscope/dashscope-sdk-python/blob/"
+    "fde7be5ac29ced6706aca4dd524ca2a5ae029dee/dashscope/aigc/"
+    "multimodal_conversation.py"
+)
 
 
-def _request(url, *, body=None, key=None, limit=32 * 1024 * 1024):
+def _request_once(url, *, body=None, key=None, limit=32 * 1024 * 1024):
     parsed = urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}
@@ -36,16 +39,43 @@ def _request(url, *, body=None, key=None, limit=32 * 1024 * 1024):
         path = parsed.path + (("?" + parsed.query) if parsed.query else "")
         connection.request("POST" if body is not None else "GET", path, body, headers)
         response = connection.getresponse()
-        if response.status != 200:
-            raise RuntimeError(f"TTS HTTP status {response.status}")
         data = response.read(limit + 1)
-        if not data or len(data) > limit:
+        if response.status == 200 and (not data or len(data) > limit):
             raise ValueError("empty or oversized TTS response")
-        return data
+        return response.status, response.getheader("Retry-After"), data
     except (OSError, http.client.HTTPException):
         raise RuntimeError("TTS HTTPS connection failed") from None
     finally:
         connection.close()
+
+
+def _request(
+    url,
+    *,
+    body=None,
+    key=None,
+    limit=32 * 1024 * 1024,
+    retry_delays=(5, 15, 30, 60),
+):
+    retryable = {429, 500, 502, 503, 504}
+    for attempt in range(len(retry_delays) + 1):
+        try:
+            status, retry_after, data = _request_once(url, body=body, key=key, limit=limit)
+        except RuntimeError:
+            if body is not None or attempt == len(retry_delays):
+                raise
+            time.sleep(retry_delays[attempt])
+            continue
+        if status == 200:
+            return data
+        if status not in retryable or attempt == len(retry_delays):
+            raise RuntimeError(f"TTS HTTP status {status}")
+        try:
+            delay = float(retry_after)
+        except (TypeError, ValueError):
+            delay = retry_delays[attempt]
+        time.sleep(max(0, min(delay, 300)))
+    raise AssertionError("unreachable TTS retry loop")
 
 
 def synthesize(text, *, model="qwen3-tts-flash", voice="Cherry"):

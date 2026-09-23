@@ -1,5 +1,5 @@
-model: deferred-protocol
-voice: null
+model: seed-duplex-3.0
+voice: zh_female_vv_jupiter_bigtts
 input_audio:
   encoding: pcm_s16le
   sample_rate_hz: 16000
@@ -15,5 +15,5 @@ temperature: null
 vad: {}
 sampling: {}
 provider_options:
-  protocol_status: unverified
-  configure_endpoint_before_use: true
+  provider_model_version: 1.2.6.1
+  protocol: realtime-json-text-v3

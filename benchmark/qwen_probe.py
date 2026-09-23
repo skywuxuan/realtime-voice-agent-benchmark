@@ -18,9 +18,13 @@ def main() -> int:
         "--audio", type=Path, required=True, help="Mono PCM16 WAV, 16 kHz, at most 30 seconds"
     )
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--model", default="qwen3.5-omni-flash-realtime")
-    parser.add_argument("--voice", default="Tina")
-    parser.add_argument("--turn-mode", choices=["manual", "server_vad"], default="manual")
+    parser.add_argument(
+        "--model",
+        choices=["qwen-audio-3.0-realtime-flash", "qwen-audio-3.0-realtime-plus"],
+        default="qwen-audio-3.0-realtime-flash",
+    )
+    parser.add_argument("--voice", default="longanqian")
+    parser.add_argument("--turn-mode", choices=["manual", "server_vad"], default="server_vad")
     parser.add_argument("--cancel-after-chunks", type=int)
     parser.add_argument("--audio-source", default="user_supplied_audio")
     args = parser.parse_args()

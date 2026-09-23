@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from adapters.registry import resolve_adapter
-from benchmark.contracts import canonical_json
+from benchmark.contracts import pretty_json
 
 
 def probe(alias: str, output: Path) -> dict:
@@ -22,7 +22,7 @@ def probe(alias: str, output: Path) -> dict:
         else "use benchmark.qwen_probe for a real Qwen connection",
     }
     output.mkdir(parents=True, exist_ok=False)
-    (output / "probe.json").write_text(canonical_json(result) + "\n", encoding="utf-8")
+    (output / "probe.json").write_text(pretty_json(result), encoding="utf-8")
     return result
 
 
@@ -30,7 +30,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        choices=["step-realtime", "doubao-realtime", "qwen3-omni-local", "qwen-realtime"],
+        choices=["step-realtime", "doubao-realtime", "qwen-realtime"],
         required=True,
     )
     parser.add_argument("--output", type=Path, required=True)

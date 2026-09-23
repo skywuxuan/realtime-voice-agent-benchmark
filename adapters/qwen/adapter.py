@@ -22,7 +22,6 @@ from adapters.base import (
 )
 from adapters.qwen.config import (
     ADAPTER_VERSION,
-    AUDIO_3_REALTIME_MODELS,
     SDK_SOURCE,
     QwenSettings,
     session_update,
@@ -141,8 +140,8 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             "server_finish_seen": self._finished.is_set(),
             "fatal_error_code": self._failure.code if self._failure else None,
             "audio3_response_policy": "server_smart_turn"
-            if self.settings.model in AUDIO_3_REALTIME_MODELS
-            else "server_turn_detection",
+            if self.config is None or self.config.turn_mode == "server_vad"
+            else "client_create_after_commit",
         }
 
     def _fail(self, code: str, message: str) -> None:
@@ -243,11 +242,7 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
 
     def _response_options(self, *, tool_followup: bool = False) -> dict:
         options = {"modalities": ["audio", "text"]}
-        if (
-            self.settings.model in AUDIO_3_REALTIME_MODELS
-            and self.config is not None
-            and self.config.tools
-        ):
+        if self.config is not None and self.config.tools:
             options["tool_choice"] = (
                 str(self.config.provider_options.get("tool_followup_choice", "auto"))
                 if tool_followup
@@ -292,14 +287,12 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             if key not in effective or effective[key] != value
         }
         strict_echoes = ["voice", "output_audio_format"]
-        if config.model not in AUDIO_3_REALTIME_MODELS:
-            strict_echoes.append("input_audio_format")
         for key in strict_echoes:
             if key in unverified:
                 raise QwenAdapterError(
                     "configuration_mismatch", f"server did not echo requested {key}"
                 )
-        if config.model in AUDIO_3_REALTIME_MODELS and "input_audio_format" in unverified:
+        if "input_audio_format" in unverified:
             unverified["input_audio_format"] = {
                 "requested": request["input_audio_format"],
                 "effective": "not echoed by Audio 3.0 session.updated",
@@ -400,14 +393,11 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         superseded = self.mapper.latest_input_turn not in {None, response.turn_id}
         if not pending and not superseded and response.turn_id:
             self.mapper.note_commit(response.turn_id)
-        if self.settings.model in AUDIO_3_REALTIME_MODELS:
-            output = (
-                result.result
-                if result.status == "success"
-                else {"error": result.error, "content": "座舱操作执行失败"}
-            )
-        else:
-            output = {"status": result.status, "result": result.result, "error": result.error}
+        output = (
+            result.result
+            if result.status == "success"
+            else {"error": result.error, "content": "座舱操作执行失败"}
+        )
         command_id, started, _, _ = await self._send_message(
             "conversation.item.create",
             item={

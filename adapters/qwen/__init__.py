@@ -1,4 +1,4 @@
-"""Qwen commercial Omni Realtime adapter (optional WebSocket dependency)."""
+"""Qwen Audio 3.0 Realtime adapter (optional WebSocket dependency)."""
 
 from adapters.qwen.adapter import QwenRealtimeAdapter
 from adapters.qwen.config import QwenSettings

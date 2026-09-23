@@ -17,9 +17,9 @@ from events.replay import read_recording
 FAKE_SECRET = "unit-test-placeholder-credential"
 
 
-def session_config(mode="manual", voice="Tina"):
+def session_config(mode="manual", voice="longanqian"):
     return SessionConfig(
-        model="qwen3.5-omni-flash-realtime",
+        model="qwen-audio-3.0-realtime-flash",
         voice=voice,
         turn_mode=mode,
         input_audio=INPUT_FORMAT,
@@ -58,7 +58,7 @@ class FakeSocket:
                     "type": "error",
                     "error": {
                         "code": "COMMON_ERROR",
-                        "message": "Voice 'Chelsie' is not supported.",
+                        "message": "The requested voice is not supported.",
                     },
                 }
             )
@@ -184,6 +184,8 @@ def test_credentials_are_environment_only_and_endpoint_is_verified(monkeypatch, 
         QwenRealtimeAdapter(context, None, clock=clock)
     with pytest.raises(ValidationError):
         QwenSettings(endpoint="wss://unverified.invalid/realtime")
+    with pytest.raises(ValidationError):
+        QwenSettings(model="unsupported-realtime")
 
 
 @pytest.mark.parametrize("mode", ["manual", "server_vad"])
@@ -244,7 +246,7 @@ def test_protocol_and_deferred_model_errors_leave_failed_artifacts(
             factory_for(ws),
             audio_path=tmp_path / "input.wav",
             output=tmp_path / "probe",
-            config=session_config(voice="Chelsie" if fault == "voice_error" else "Tina"),
+            config=session_config(voice="invalid-voice" if fault == "voice_error" else "longanqian"),
             secrets=(FAKE_SECRET,),
             response_timeout_s=2,
         )

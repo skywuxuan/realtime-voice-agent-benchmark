@@ -27,22 +27,24 @@ class AdapterRegistration:
 
             return lambda context, sink, clock: StepRealtimeAdapter(context, sink, clock=clock)
         if self.alias == "doubao-realtime":
-            from adapters.doubao import DoubaoRealtimeAdapter
+            from adapters.doubao import DoubaoRealtimeAdapter, DoubaoSettings
 
-            return lambda context, sink, clock: DoubaoRealtimeAdapter(context, sink, clock=clock)
-        if self.alias == "qwen3-omni-local":
-            from adapters.opensource.qwen_omni import QwenOmniAdapter
-
-            return lambda context, sink, clock: QwenOmniAdapter(context, sink, clock=clock)
+            settings = DoubaoSettings()
+            return lambda context, sink, clock: DoubaoRealtimeAdapter(
+                context, sink, settings=settings, clock=clock
+            )
         raise ValueError("adapter is not registered")
 
 
 def resolve_adapter(alias: str) -> AdapterRegistration:
-    if alias not in {"qwen-realtime", "step-realtime", "doubao-realtime", "qwen3-omni-local"}:
+    if alias not in {"qwen-realtime", "step-realtime", "doubao-realtime"}:
         raise ValueError(f"unknown adapter: {alias}")
     if alias == "qwen-realtime":
-        config = "configs/qwen-realtime.yaml"
+        config = "configs/qwen-audio-3.0-realtime-flash-agent.yaml"
         credentials = ("DASHSCOPE_API_KEY",)
+    elif alias == "doubao-realtime":
+        config = "configs/doubao-realtime.yaml"
+        credentials = ("BYTEDANCE_LLM_API_KEY",)
     else:
         config = f"configs/{alias}.yaml"
         credentials = ()
