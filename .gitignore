@@ -14,8 +14,19 @@ runs/
 # Generated benchmark assets and compiled test sets. Recreate with the dataset
 # preparation commands documented in docs/text-dataset.md and docs/cockpit-benchmark.md.
 datasets/audio/
+datasets/cockpit/
 datasets/rendered/
 datasets/catalogs/
 scenarios/compiled/
 scenarios/agent/cockpit_compiled/
 reports/cockpit-source-audit*.json
+reports/cockpit-*.json
+reports/cockpit-*-views/
+reports/cockpit-*-shards/
+reports/cockpit-*-summary*/
+reports/*.log
+reports/**/*.json
+reports/**/*.jsonl
+reports/**/*.html
+reports/**/*.wav
+reports/**/*.log
