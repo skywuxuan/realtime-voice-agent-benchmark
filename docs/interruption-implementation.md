@@ -1,6 +1,7 @@
 # Phase 4 Interruption 实现与验收
 
-更新日期：2026-09-19。当前已完成双轮 runner、虚拟播放取消、失败路径工件回归及一次完整真实 Qwen 运行。评估版本为 `interruption-0.3`。尚只有一组冻结中文音频；多语义场景和独立语音内容核验仍待扩展。Phase 5 Backchannel 已独立接入，见 [Backchannel 实现](backchannel-implementation.md)。
+当前实现包含双轮 runner、虚拟播放取消、失败路径处理和 `interruption-0.3` evaluator。
+Backchannel 使用独立评价语义，见 [Backchannel 实现](backchannel-implementation.md)。
 
 ## 如何运行
 
@@ -34,7 +35,9 @@
 
 ## Qwen 顺序差异
 
-实测可出现 `response.done(status=cancelled, reason=turn_detected)` 先于 `speech_started`。mapper 在同一最新 response、无客户端 cancel 请求、明确 turn reason、后到 VAD 在一秒内且没有新 active response 时补齐检测证据。这一秒是本地保守关联窗口，不是厂商 SLA。
+协议允许 `response.done(status=cancelled, reason=turn_detected)` 与 `speech_started` 乱序到达。
+mapper 在同一最新 response、无客户端 cancel 请求、明确 turn reason、后到 VAD 在一秒内且
+没有新 active response 时补齐检测证据。这一秒是本地保守关联窗口，不是厂商 SLA。
 
 VAD 先到时同样要求服务端取消证据。client cancel、未知客户端/服务端竞态、过旧 cancel 和无关 reason 不生成 confirmed detection。input item 通过唯一未提交输入回合关联；已提交 t1 的尾部静音不会把 t1 再次加入 t2 的响应队列。
 
@@ -55,24 +58,7 @@ VAD 先到时同样要求服务端取消证据。client cancel、未知客户端
 
 分组保留完整模型配置、控制策略、measurement profile、播放模式、边界方法/状态/分辨率。逐 WAV 的 RMS threshold 留在场景工件，不再把同一 suite 切成无意义的单样本组。自动边界仍不与人工边界合并。
 
-## 真实工件与历史修正
+## 发布边界
 
-| Run | 场景/结果 | 说明 |
-|---|---|---|
-| `qwen-phase4-interruption-20260918-001` | 未发送中断，invalid | 历史错误将 remaining_ms 当已播放时长；保留原始记录 |
-| `qwen-phase4-interruption-20260918-002` | invalid | 原生取消和 t2 已观察到，旧 drain 收尾失败 |
-| `qwen-phase4-interruption-20260918-003/004` | invalid | 历史 abort 实现错误，保留失败工件 |
-| `qwen-phase4-interruption-20260918-005` | v1；0.3 重评为 unknown | 检测 confirmed、stop 357.443ms、residual 342.404ms；新回答播放被截断。旧 0.2 的 pass 过于宽松，旧评价保留 |
-| `qwen-phase4-interruption-20260919-001` | v2；eligible，context unknown | confirmed 检测，stop 371.013ms，residual 355.655ms，新回答完整播放、无 cleanup warning |
-
-v2 保持输入 WAV 和 20ms measurement 门槛不变；drain 从 20 秒增加到 60 秒并记录为新场景版本，旧城市排除词显式加入 oracle。新回答先解释“刚才说成北京了”，再推荐上海地标，触发了保守旧城市规则。该样本保留 unknown；不会重试到 pass，也不会将其从检测/停止统计中删掉。Context Switch 的规则局限应通过独立 ASR/人工样本或后续质量评价解决。
-
-上述都是单样本工程验收，不能用于模型排名。`transcript.json` 是厂商转写，完整播放也不替代独立音频内容核验；当前没有真实扬声器测量、playback acknowledgement 或 conversation truncation。
-
-## 回归与剩余工作
-
-2026-09-19 已通过 Ruff 与 101 项全量本地测试，其中 25 项在 `tests/test_interruption.py`。包括正常双轮、延迟的新 response、超时、旧回答不停止、新回答无音频/failed、断线、缺失 session end、client cancel 污染、取消后晚到 PCM、新回答 drain 截断、cancel/close 同时发生的样本守恒、where/occurrence/缓冲不足、过旧 VAD、分组、混合 suite 预拒绝及无 key 重评一致性。
-
-普通沙箱可能阻塞 asyncio 磁盘线程，完整测试在受控执行环境运行。测试使用本地 fake adapter，不调用收费模型。
-
-剩余工作是扩展约 10 个不同内容的中文中断场景，补充多说话人/更复杂重叠输入的关联实验，并校准语义规则。Backchannel、duplex、deterministic tools、Agent evaluator 和报告基础已接入；provider live protocol 和完整 MVP 仍未完成。
+真实输入、运行目录、逐 case 证据和评价结果均保存在本地工件，不写入仓库文档。
+`transcript.json` 是厂商转写，不能替代独立音频内容核验；虚拟播放也不等同于真实扬声器测量。

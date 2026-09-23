@@ -52,9 +52,13 @@ TTFA_playback_ms = (assistant_playback_start(r) - user_audio_end(u)) / 1e6
 
 ### 2.2 Interruption / Barge-in
 
-典型刺激是助手正在讲北京，用户插入“等等，换成上海呢？”。主实验只注入音频，不根据已知 interruption 标签主动 cancel。
+典型刺激是助手回答旧意图时，用户通过第二段音频改成新意图。主实验只注入音频，不根据
+已知 interruption 标签主动 cancel。
 
-eligible 需要：旧 response 已开始播放、刺激确实在播放中送入、该控制 track 需要的服务端响应仍 active、存在足够后续播放/生成证据，以及日志完整。仅剩本地缓存播放、服务端早已完成的样本标 `playback_only`，不混入 native cancellation 统计。绑定目标 response 后，后来的上海回复不能当成“残余北京音频”。
+eligible 需要：旧 response 已开始播放、刺激确实在播放中送入、该控制 track 需要的服务端
+响应仍 active、存在足够后续播放/生成证据，以及日志完整。仅剩本地缓存播放、服务端早已
+完成的样本标 `playback_only`，不混入 native cancellation 统计。新意图的回答不能算作旧
+response 的残余音频。
 
 | Metric | 定义 |
 |---|---|
@@ -73,11 +77,13 @@ Stop Latency 与 Residual Audio Duration 不同：前者是末端的墙上经过
 
 若厂商无法直接暴露 interruption detection，则把确认数、推断数、unknown 分列。证据不完整时给保守下界 `confirmed/eligible`、上界 `(confirmed+unknown)/eligible`，不得用 speech_started 或客户端发出 cancel 填满检测成功率。
 
-Context switch 的简单中文槽位可以规则核对，但原文本包含“北京”不必然失败，例如“好的，不看北京，我们改看上海”。先依据是否将新意图作为回答目标，规则不确定时交 judge/人工抽查。不可仅用“出现上海”判成功。
+Context switch 的简单槽位可以规则核对，但回复提及旧槽值不必然失败。应先判断回答目标是否
+切换到新意图；规则不确定时交 judge 或人工抽查，不能仅凭出现新槽值判成功。
 
 ### 2.3 User Backchannel
 
-刺激覆盖“嗯、嗯嗯、对、是、好的、哦、啊、我知道、你继续”等；选在有明确后续内容的助手语音中。语境应使其表示继续倾听，歧义用例单独分组。“好的”在某些任务中可能表示结束/确认，不能预设所有语境都为同一种行为。
+刺激应覆盖短确认语和继续提示，并放在有明确后续内容的助手语音中。语境应表达继续倾听，
+歧义用例单独分组；同一短语在不同任务中可能表示结束或确认，不能预设统一语义。
 
 ```text
 False Interruption Rate = false_interruptions / eligible_backchannels
@@ -213,22 +219,21 @@ Task Completion 优先采用 EVA 的规范化状态比较与 diff 思想，但�
 
 ## 6. 实施顺序与阶段退出条件
 
-用户已批准设计，Phase 1/2 的契约与真实接入，以及 Phase 3 的单轮 latency runner/evaluator 已完成。Phase 4 已补失败路径回归和完整工件；Phase 5 Backchannel 与 Phase 6 duplex 指标已接入共享事件契约；Phase 7 Mock Tools、Phase 8 Agent evaluator 已可离线运行。Step/Doubao/本地 Omni 适配器保持未核验并拒绝伪造 live protocol，不改变 Qwen → Step → Doubao 顺序。
+实施按公共契约、provider adapter、Realtime runner/evaluator、双轮控制、Backchannel、
+报告、Mock Tools 和 Agent evaluator 逐层推进。未核验 provider 必须保持 deferred，不能伪造
+live protocol。具体实现状态以代码和 adapter registry 为准。
 
 | Phase | 产物 | 验收与必要检查 |
 |---|---|---|
-| 1（已完成） | Event Schema/Recorder、Scenario Schema、Adapter Base；Python 3.11 + uv.lock | schema roundtrip、时钟边界、raw/normalized/PCM 引用、partial artifact；scripted transport 可录可重放，无模型分数 |
-| 2（已完成） | Qwen Realtime Adapter + connection probe | manual/VAD 真实音频往返及主动取消确认、双向事件/PCM/WAV/配置记录；不等于正式 latency/barge-in 测量 |
-| 3（已完成） | Latency runner/evaluator、10 条冻结 TTS、后台录制与虚拟播放 | 真实 10-case 运行；语音边界来源分组、timeout/提前响应/计时超限反例、离线重算一致；见 [实测记录](latency-implementation.md) |
-| 4（基础链路已验收，继续扩展） | 双轮 runner、evaluator 0.3、1 个 v2 中文 fixture、25 项专用回归和完整 Qwen 工件 | 扩展不同内容场景、校准语义规则；unknown 不填为成功。见 [Phase 4 实现](interruption-implementation.md) |
-| 5（基础实现） | Backchannel runner/evaluator、synthetic fixture、一次 Qwen 协议实验 | 不读 oracle 控制 cancel，continued/false/unknown 分离；扩展真实中文语料和多 case |
-| 6（报告） | 基础 HTML report、CLI 工件导出 | 离线可生成报告，继续扩展可视化 |
-| MVP 2 扩展（时序闭环） | 显式输入区间、9 个衍生场景、duplex-0.2 | 5 个真实 pause 变体已跑；Overlap 内容理解仍 unknown，需扩展多人/自然语料 |
-| 7（基础实现） | Mock Tool Server | 三领域、隔离初态、严格参数、call_id 幂等、固定故障、状态 hash 和统一事件；待扩展超时后已提交故障 |
-| 8（本地闭环） | 音频 → Qwen工具事件 → runtime → 结果回传 → 音频 → 状态重放 | 标准答案不参与执行；fake 协议与工件回归通过，Plus 天气、查车→日历和查询执行中改口有真实工件；支持有序结果依赖，允许多拓扑 DAG 和歧义追问仍待扩展。见 [Agent 实现](agent-implementation.md) |
-| 9 | Step Adapter | 当时官方协议验证、同一契约与基准；先能力 probe |
-| 10 | Doubao Adapter | 同上，不提前猜 endpoint、鉴权或环境变量 |
-| 11 | Qwen 开源 Omni Adapter | 独立后端版本/GPU/streaming profile，不能伪造 full duplex |
+| 1 | Event Schema、Recorder、Scenario Schema、Adapter Base | schema、时钟、raw/normalized/PCM 引用和 partial artifact |
+| 2 | Provider Adapter 与 capability probe | 音频、事件、取消、配置确认和能力声明 |
+| 3 | Latency runner/evaluator、后台录制与虚拟播放 | 边界分组、超时、计时有效性和离线重算 |
+| 4 | 双轮 runner 与 interruption evaluator | 前置条件、停止证据、残余音频和上下文切换 |
+| 5 | Backchannel runner/evaluator | continued、false interruption 与 unknown 分离 |
+| 6 | HTML/JSON 报告 | 从封口工件离线生成，报告文件不进入版本控制 |
+| 7 | Mock Tool Server | 严格参数、call_id 幂等、固定故障、状态 hash 和统一事件 |
+| 8 | Agent runtime/evaluator | 标准答案不参与执行，支持结果回注、状态重放和依赖证据 |
+| 9+ | 后续 Provider | 先核验官方协议和能力，再实现 adapter |
 
 每 phase 只跑与改动相关的验证。基础设施测试使用必要的失败/竞态反例：无首音频、负 TTFA、旧音频晚到、重复调用、timeout 已提交、backchannel 被客户端清队列、日志截断。真实模型 smoke test 留独立 marker，需显式配置凭据与预算，默认测试不联网收费。
 
@@ -241,7 +246,8 @@ python -m benchmark.run --model qwen-realtime --suite realtime --scenario scenar
 python -m benchmark.evaluate --run runs/<run_id>
 ```
 
-当前 `basic.yaml` 包含 10 条 latency case；后续再加入 interruption/backchannel。未运行维度不填零，Latency case 不产生另外两类指标。当前每个 case 的源工件在 `cases/` 下，聚合 metrics 与版本化重评在 run 根目录及 `evaluations/`。
+未运行维度不填零，Latency case 不产生其他类别指标。每个 case 的源工件在 `cases/` 下，
+聚合 metrics 与版本化重评在 run 根目录及 `evaluations/`。
 
 Done 要同时满足：
 
@@ -254,6 +260,8 @@ Done 要同时满足：
 
 ## 8. 已确认的设计决定
 
-已确认采用：Python/asyncio、统一双时钟事件、收到音频与播放音频分离、MVP paced virtual playback、native/server 与客户端强制控制分 track、离线评价、遵循 Qwen 官方协议的 adapter、EVA 式状态 oracle。Qwen transport 采用原设计允许的 asyncio WebSocket 路线。Phase 2 已验证一个账户/模型/音色及客户端取消；自然打断、上下文恢复和阈值仍属于后续实验。
+采用 Python/asyncio、统一双时钟事件、收到音频与播放音频分离、paced virtual playback、
+native/server 与客户端强制控制分 track、离线评价、厂商协议隔离和状态 oracle。
 
-Phase 2 probe 的接收 WAV 和 file-end 诊断仍不进入正式 latency 统计。Phase 3 已实现冻结边界、播放时间线、发送/写入解耦和调度门槛；当前真实数据使用自动能量边界，TTFA 明确属于该估计边界组。人工边界与真人语音覆盖尚待补充。
+probe 的接收 WAV 和 file-end 诊断不进入正式 latency 统计。自动能量边界与人工边界必须
+分组；虚拟播放结果不得表述为真实声卡或用户听感测量。

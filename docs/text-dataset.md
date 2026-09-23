@@ -86,18 +86,19 @@ trigger_delay_ms: 350
 trigger_timeout_ms: 20000
 minimum_continuation_ms: 800
 cases:
-  - id: text_full_city_001
-    initial_text: 请详细介绍北京适合周末游玩的地方，至少说三个。
-    stimulus_text: 等一下，不是北京，我想问上海。
+  - id: full_duplex_example
+    initial_text: <第一段用户文本>
+    stimulus_text: <第二段用户文本>
     expected_new_intent:
-      city: 上海
+      slot: <新值>
     forbidden_old_intent:
-      city: 北京
+      slot: <旧值>
 ```
 
 两段音频都在会话前合成。第一段在 `session_ready` 后播放；第二段绑定第一轮的 `assistant_playback_start`，等待 `trigger_delay_ms` 后发送。发送前必须确认目标回答仍在播放、仍在生成且本地已有至少 `minimum_continuation_ms` 的后续音频证据，否则该 attempt 标为 invalid，不能算模型中断失败。
 
-Backchannel 只需把 category 改为 `backchannel`，并将 `stimulus_text` 写成“嗯嗯”“你继续”等。其 oracle 自动要求旧回答继续；runner 不因知道标签而调用客户端 cancel。
+Backchannel 只需把 category 改为 `backchannel`，并把 `stimulus_text` 设为合适的短确认语。
+其 oracle 自动要求旧回答继续；runner 不因知道标签而调用客户端 cancel。
 
 需要逐 case 控制 trigger、precondition、oracle 或 termination 时，使用 `kind: text_scenario` 详细格式。示例位于 `datasets/source/half_duplex/basic.yaml`、`pause.yaml` 和 `datasets/source/full_duplex/interruption.yaml`。
 
@@ -138,7 +139,7 @@ Qwen TTS profile 位于 `configs/tts/qwen-cherry.yaml`。API key 只从官方环
 
 `datasets/rendered/<profile_id>/` 保存 WAV 与同名 JSON。TTS 音频身份由文本、完整 profile、renderer/FFmpeg 指纹和边界 recipe 决定；供应商输出 URL 与 key 不保存。第一次成功渲染后文件不可覆盖，供应商再次合成可能不同也不会改变旧资产。
 
-`scenarios/compiled/<dataset_id>/<compilation_id>/` 保存展开后的 `source.json`、runtime Scenario、suite 和 manifest。compilation ID 还包含编译器及 schema 源码指纹，因此执行逻辑变化会生成新目录，同时继续复用内容相同的冻结音频。
+`scenarios/compiled/<dataset_id>/<compilation_id>/` 保存展开后的 `source.json`、runtime Scenario、suite 和 manifest。新生成的普通JSON使用缩进格式；JSONL仍保持一行一条。compilation ID 还包含编译器及 schema 源码指纹，因此执行逻辑变化会生成新目录，同时继续复用内容相同的冻结音频。
 
 输出中的 `cache_hits`、`cache_misses` 和 `provider_calls` 分开记录。segment 拼接可能产生本地 cache miss，但 `provider_calls=0` 表示没有发生收费的 TTS 请求。
 
@@ -150,10 +151,7 @@ Qwen TTS profile 位于 `configs/tts/qwen-cherry.yaml`。API key 只从官方环
 - 单一 TTS 音色只能验证基础设施和控制行为，不能替代真人 speaker、口音、噪声和自然犹豫数据。
 - 文本 source 不自动提供开放回答的正确性标准。知识、推理和自然度仍需 rule、reference、judge 与人工抽样层。
 
-## 7. 当前真实验证
+## 7. 发布边界
 
-2026-09-21 的 `runs/qwen-text-corpus-half-20260921-001/` 从紧凑 corpus 直接运行两条 Qwen Realtime case，2 条均 completed 且 evaluator pass。输入编译为 2 次 cache hit、0 次 provider call；receive TTFA 两条样本为 1200.236ms 和 1228.364ms。离线重评得到相同 evaluation ID。
-
-`runs/qwen-text-corpus-full-20260921-001/` 从紧凑全双工 corpus 直接运行一条 interruption case。刺激 eligible，中断检测 confirmed，Stop Latency 381.465ms，Residual Audio 362.878ms；新回答未在期限内完成，因此 case 为 fail、context switch 为 unknown。离线重评 ID 不变，运行阶段同样为 2 次 cache hit、0 次 provider call。
-
-详细格式还完成了单条半双工 latency、全双工 interruption 和 800ms pause 的真实运行。此前 interruption 的行为语义规则保守判为 unknown；pause case 因目标 response 未完成判 fail。这些失败和 unknown 保留为模型/场景证据，不改写为编译成功。样本量和音色覆盖不足以用于模型排名。
+文本源、冻结音频、编译目录、运行工件和评价结果均为本地数据，不进入版本控制。仓库只保存
+schema、编译器、示例格式和不含外部测试内容的自动化测试。

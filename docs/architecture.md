@@ -1,6 +1,8 @@
 # Realtime Voice Agent Benchmark 架构提案
 
-状态：**Phase 1–8 已有不同程度实现和实测；2026-09-21 新增文本源到冻结 TTS 音频的编译层，半双工、全双工中断和 pause 已走通真实 Qwen 链路；Phase 9–11 仍 deferred**。研究日期：2026-09-17；状态更新：2026-09-21。
+状态：核心事件、场景、Qwen/Seed Adapter、文本到冻结音频编译、Realtime runner、Agent
+runtime 和离线 evaluator 已实现；Step 等未核验 provider 保持 deferred。本文描述架构和
+证据边界，不记录实际测试内容或结果。
 
 本项目评测中文完整语音 Agent，分别输出 Realtime、Agent、Response Quality 指标，不计算 Overall Score。第一版只接 Qwen 商业 Realtime，跑通少量 latency、interruption、user backchannel 场景。本文描述目标架构；当前可运行范围及命令见 [README](../README.md)。
 
@@ -32,17 +34,15 @@
 
 ### 2.1 固定资料版本
 
-GitHub 源码浅克隆成功，研究副本在 `/tmp`，不纳入本仓库。网页搜索工具返回后端不支持的错误；阿里云帮助中心与 arXiv 网络请求遇到 TLS 错误。因此商业协议以官方 SDK 和官方示例为已核验依据；没有声称读完帮助中心页面或全部论文。Qwen3-Omni 另读取了官方仓库附带的技术报告。外部完整数据集未下载，数据覆盖规模若来自 README 会特别说明。
+GitHub 源码浅克隆成功，研究副本在 `/tmp`，不纳入本仓库。网页搜索工具返回后端不支持的错误；阿里云帮助中心与 arXiv 网络请求遇到 TLS 错误。因此商业协议以官方代码和真实会话为已核验依据；没有声称读完帮助中心页面或全部论文。外部完整数据集未下载，数据覆盖规模若来自 README 会特别说明。
 
 | 项目 | 研究 commit | 用途 |
 |---|---|---|
 | Full-Duplex-Bench | `3e799c45a045256f47d5f1c9cda90157e2d2ec9e` | 双工任务、时序标注、编排、工具调用 |
 | EVA | `4cd0028b95111f72b33f53e9ef5c97241fe56238` | 多轮 Agent、状态校验、体验评价 |
 | VCB-Bench | `542990571e5b6e3fbce4a318492aec5607aaee3c` | 中文真人语音、回答质量、鲁棒性 |
-| Qwen3-Omni | `e4235853125589c789f06a2dd83e9f4126df5e9d` | 本地模型接口、部署边界 |
-| DashScope Python SDK | `fde7be5ac29ced6706aca4dd524ca2a5ae029dee` | 商业 Omni Realtime 协议 |
 | 阿里云 speech demo | `1082942345c555429ee61c04b8c585f12e06dab2` | 音频、VAD、函数调用官方示例 |
-| vLLM-Omni | `e3be42e052e88d052d21cf7a24ee84c70f020fd6` | Qwen3-Omni 后续流式服务候选 |
+| QwenAudio Agent | `149440d01d5f3ff4feaf2c6f904d05e6ac81d499` | Audio 3.0 smart-turn 与座舱工具时序 |
 
 ### 2.2 Full-Duplex-Bench 的演进及可借鉴内容
 
@@ -52,7 +52,10 @@ GitHub 源码浅克隆成功，研究副本在 `/tmp`，不纳入本仓库。网
 
 `get_transcript/asr.py` 使用 Parakeet 输出 `{text, chunks: [{text, timestamp}]}`，并在截取 interruption 后的语音时加回时间偏移。可借鉴时间轴恢复方法，但该英文 ASR 路线不能直接当作中文标注真值。其模型推理脚本有并行发送/接收、输出补静音的设计，可作为保存音频时间线的参考。[ASR 源码][fdb-asr]
 
-指标必须重新定义。`eval_smooth_turn_taking.py` 会把负延迟截为零；`eval_pause_handling.py` 使用 1 秒、3 个词等启发式条件。我们保留提前响应与失败样本，不移植英文词数阈值。`eval_backchannel.py` 测模型作为 listener 的主动 backchannel，以 TOR、频率、时间分布衡量；本项目 MVP 测用户“嗯嗯”后助手是否被错误打断，接近 v1.5 的 user backchannel 场景。[v1 指标目录][fdb-eval]
+指标必须重新定义。`eval_smooth_turn_taking.py` 会把负延迟截为零；`eval_pause_handling.py`
+使用固定时长和词数启发式条件。我们保留提前响应与失败样本，不移植英文词数阈值。
+`eval_backchannel.py` 测模型作为 listener 的主动 backchannel；本项目测用户短确认语后助手是否
+被错误打断，接近 v1.5 的 user backchannel 场景。[v1 指标目录][fdb-eval]
 
 v1.5 的 `eval_behavior.py` 利用 clean/overlap 成对转写，将行为分为继续响应、恢复、处理不确定性等类别。我们借鉴成对实验与行为分项，保留 side conversation、ambient speech、simultaneous speech 独立标签，不将它们都标为 interruption。
 
@@ -90,17 +93,13 @@ EVA-A 包括 deterministic task completion，以及 faithfulness、speech fideli
 
 原始 dataset 使用 JSONL。`almeval/datasets/base.py` 声明每项的 `index`、`audio_path`（单路径或列表）、`question`、`answer`、`subset`；Audio-QA 另带 `audio_content` 供评价参考。loader 转为 `index`、`audio` 路径列表、`text`、`meta` 等模型输入，不同任务补充 `task_type`。`ds_mtturn.py` 使用 `mt_meta.rounds/this_round/score_ratio` 组织多轮评分，将 1–5 分 judge 按轮次权重汇总；缺失轮次分数的对话另统计 invalid。`run_audio.py` 支持仅推理、ASR 后评价和离线重新评价，结果保存 JSONL、prediction、输出音频路径及性能 JSON，适合参考 run/evaluate 解耦。[数据实现][vcb-datasets]、[入口][vcb-run]
 
-`almeval/models/base.py` 的核心是整段 `generate_inner(msg)`；Qwen Omni、Qwen3-Omni、StepAudio 的具体实现返回 prompt、文本、可选 `(sample_rate, waveform)`，入口再写音频文件。`task_type=audio2audio` 控制语音生成，多轮历史由输入音频与文本列表构建。这些是离线质量评测适配代码，并非能边听边说、带真实到达时间的 Realtime Adapter。[模型实现][vcb-models]
+`almeval/models/base.py` 的核心是整段 `generate_inner(msg)`；具体模型实现返回 prompt、文本、可选 `(sample_rate, waveform)`，入口再写音频文件。`task_type=audio2audio` 控制语音生成，多轮历史由输入音频与文本列表构建。这些是离线质量评测适配代码，并非能边听边说、带真实到达时间的 Realtime Adapter。[模型实现][vcb-models]
 
 `ds_mqa.py`、`ds_refqa.py` 用任务相关的参考答案/judge 判语义准确性，不能称全部 deterministic。`ds_openqa.py` 支持开放题文字 judge 与音频 judge 分支，`metrics/ifeval.py` 提供 strict/loose 可验证指令规则。可以参考它们按任务选择证据的结构；其中某些 judge 调用 temperature=0.5，不能直接当成重复执行结果固定的评价器。[开放题评价][vcb-openqa]、[指令规则][vcb-ifeval]
 
 采用其中文维度划分、成对鲁棒性样本、规则检查与 judge 分工。不要把文字 judge 的“详细”偏好直接用于语音回答，也不要将模型自己输出的文本视为已说出的音频全文；语音内容使用独立 ASR，并记录 ASR 来源、版本和不确定性。环境扰动/说话人变体的结果不应混入 clean realtime latency。
 
-### 2.5 Qwen3-Omni
-
-**[源码验证]** Instruct 版本支持语音输入与语音输出；Thinking/Captioner 是 thinker-only。官方 Transformers 示例 `generate()` 返回文本和完整音频，web demo 不能充当流式到达时间证据。vLLM-Omni 有 Qwen 流式音频服务，但其 realtime 文档明确是 turn-based；当前 native duplex 路线不能直接套在 Qwen 上。部署、显存和模型/框架边界详见 [Qwen 文档](qwen-integration.md#6-开源-qwen3-omni-后续路线)。
-
-### 2.6 复用边界
+### 2.5 复用边界
 
 | 项目 | 采用的设计 | 不直接采用的实现 |
 |---|---|---|
@@ -109,7 +108,7 @@ EVA-A 包括 deterministic task completion，以及 faithfulness、speech fideli
 | VCB | 中文质量分类、音频资产与任务字段、离线重评、鲁棒性配对 | 整段生成接口充当实时协议、文本表现替代语音表现 |
 | Qwen 官方 | 实际 SDK/示例协议、输入输出格式、部署接口 | demo 清队列策略当模型语义能力、SDK 内置延迟当本项目 TTFA |
 
-许可证也需按代码/数据区分。FDB 根目录为 CC BY-NC 4.0，dataset README 对部分 synthetic/v1.5 数据声明 MIT，Candor/ICC 另有上游条款；EVA 根代码 MIT；VCB 代码 Apache-2.0 并附第三方条款；Qwen3-Omni 与 DashScope SDK 为 Apache-2.0；阿里云 demo 为 MIT。当前只借鉴设计，未复制实现；后续若引入代码/数据，逐文件核对声明并保留出处。数据许可不能由代码许可推定。
+许可证也需按代码/数据区分。FDB 根目录为 CC BY-NC 4.0，dataset README 对部分 synthetic/v1.5 数据声明 MIT，Candor/ICC 另有上游条款；EVA 根代码 MIT；VCB 代码 Apache-2.0 并附第三方条款；阿里云 demo 为 MIT。当前只借鉴设计，未复制实现；后续若引入代码/数据，逐文件核对声明并保留出处。数据许可不能由代码许可推定。
 
 ## 3. Proposed Architecture [方案]
 
@@ -119,7 +118,7 @@ flowchart TD
     S --> U[Audio Simulator / Future User Simulator]
     U --> A[RealtimeModelAdapter]
     A --> Q[Qwen Realtime]
-    A --> L[Later: Step / Doubao / Qwen Omni / Cascade]
+    A --> L[Later: Step / Doubao / Cascade]
     A --> B[Event Bus]
     U --> B
     S --> B
@@ -156,7 +155,7 @@ Runner 只处理通用配置、生命周期、能力检查、预算和超时。�
 | `configs/` | 模型/session/evaluation profiles；只引用环境变量名 |
 | `tests/` | 事件 fixtures、fake transport、计时与状态反例及工具闭环；默认不调用收费 API |
 
-初期只创建用到的模块。Step、Doubao、Cascade、本地 Omni 目录到对应阶段再建，避免先堆空实现。
+初期只创建用到的模块。Step、Doubao、Cascade 到对应阶段再建，避免先堆空实现。
 
 ### Phase 4 已实现的边界
 
@@ -262,16 +261,17 @@ Mock Tool Runtime 先在进程内提供确定性服务契约，未来如需 HTTP
 
 | 风险/未知 | 影响 | 处理与验证 |
 |---|---|---|
-| Qwen 不同账户/区域的可用模型 | 示例配置不保证全部可用 | 已验证北京 endpoint 的 Flash/Tina；Chelsie 生成被拒绝；其他组合仍逐项 probe |
-| VAD 会不会对“嗯嗯”取消，是否独立支持语义打断 | Backchannel 指标可能很差或证据不足 | 行为结果原样报告；不按 ground truth 控制 cancel |
+| Qwen 不同账户/区域的可用模型 | 示例配置不保证全部可用 | 已验证北京 endpoint 的 Audio 3.0 Flash；其他组合仍逐项 probe |
+| VAD 会不会对短确认语取消，是否独立支持语义打断 | Backchannel 指标可能很差或证据不足 | 行为结果原样报告；不按 ground truth 控制 cancel |
 | 取消确认、晚到音频、服务端上下文裁剪 | Stop latency 和新意图理解易混淆 | response/item/call ID、播放审计、取消来源与上下文能力逐项验证 |
 | 客户端没有服务端阶段耗时 | 无法纯粹拆出模型/TTS 耗时 | 只报 client-observed 分解，内部耗时 unavailable |
 | 样本每类仅 10 个 | P95/P99 不稳定 | 显示 n、失败率及原始值，不宣传为稳定排行 |
 | 中文 ASR 与音频语义不一致 | Context switch/quality 判定可能偏差 | 独立 ASR + 抽听；不确定结果允许 unknown |
-| 本地 Omni 显存/实时能力取决后端 | 无法与商业 API 无条件同组 | 记录完整模型+服务栈，按能力/控制策略分组 |
 | 当前无有效 Git 元数据 | 无法取得代码 revision/生成 git diff | 留空原因；不主动修复 Git 元数据 |
 
-Phase 1–3 的历史实测证据见 [Qwen 接入](qwen-integration.md#8-phase-2-实现与真实验证记录) 与 [Latency](latency-implementation.md)。当前 Phase 4 按 [实现说明](interruption-implementation.md) 继续扩展场景和校准语义规则；Phase 5 Backchannel 已按 [实现说明](backchannel-implementation.md) 接入同一运行入口，再扩展 Phase 6 的场景。保留 Qwen → Step → Doubao → 本地 Omni 的接入顺序。
+Qwen Audio 3.0 协议依据见 [Qwen 接入](qwen-integration.md) 与
+[座舱 Benchmark](cockpit-benchmark.md)。Interruption、Backchannel 和 duplex 继续共享
+同一事件与评价契约；其他供应商必须在各自 adapter 内完成协议核验。
 
 [fdb-data]: https://github.com/DanielLin94144/Full-Duplex-Bench/blob/3e799c45a045256f47d5f1c9cda90157e2d2ec9e/v1_v1.5/dataset/README.md
 [fdb-asr]: https://github.com/DanielLin94144/Full-Duplex-Bench/blob/3e799c45a045256f47d5f1c9cda90157e2d2ec9e/v1_v1.5/get_transcript/asr.py

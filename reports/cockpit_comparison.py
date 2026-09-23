@@ -229,7 +229,7 @@ def build_comparison(
             "topology": "one expected tool schema exposed per case",
             "interpretation": [
                 "Pass requires exact expected arguments and one successful tool sequence.",
-                "Tool-name accuracy does not measure selection among 100 functions.",
+                "Tool-name accuracy does not measure selection across the full catalog.",
                 "Schema-invalid labels and no-tool rows are excluded from task completion.",
                 "Original sealed runs and shard reports are referenced, not rewritten.",
             ],
@@ -276,7 +276,7 @@ def _write_readme(output: Path, summary: dict) -> None:
 - `functions.json`：逐函数的 pass/fail/invalid。
 - `cases.json`：逐源行的标签、ASR、实际调用、回复和工件路径。
 
-本报告每个 case 只暴露标签对应的一个工具 schema，不代表模型能在100个工具中完成选择。
+本报告每个 case 只暴露标签对应的一个工具 schema，不代表模型能在完整候选目录中完成选择。
 """
     (output / "README.md").write_text(text, encoding="utf-8")
 
@@ -293,7 +293,7 @@ def _write_html(output: Path, summary: dict, functions: list[dict], cases: list[
 <style>
 :root{color-scheme:light;--ink:#17202a;--muted:#64717d;--line:#d8dee4;--soft:#f4f6f8;--green:#147a51;--red:#b42318;--amber:#9a6700;--blue:#1769aa}*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:#fff;letter-spacing:0}header{border-bottom:1px solid var(--line);padding:24px max(20px,calc((100vw - 1280px)/2)) 18px}h1{font-size:26px;margin:0 0 6px}h2{font-size:18px;margin:26px 0 10px}p{margin:6px 0;color:var(--muted)}main{max-width:1280px;margin:auto;padding:0 20px 48px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--line)}.provider{padding:18px 0}.provider:first-child{border-right:1px solid var(--line);padding-right:24px}.provider:last-child{padding-left:24px}.numbers{display:grid;grid-template-columns:repeat(4,minmax(80px,1fr));gap:12px;margin-top:12px}.metric strong{display:block;font-size:22px}.metric span{color:var(--muted)}.pass{color:var(--green)}.fail{color:var(--red)}.invalid{color:var(--amber)}.toolbar{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}input,select,button{font:inherit;border:1px solid var(--line);background:#fff;padding:7px 9px;border-radius:4px}input{min-width:280px;flex:1}button{cursor:pointer}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:8px}th{position:sticky;top:0;background:var(--soft);z-index:1}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word}.pill{display:inline-block;border:1px solid currentColor;border-radius:999px;padding:1px 7px;font-size:12px}.note{border-left:3px solid var(--blue);padding:8px 12px;background:var(--soft);margin:14px 0}.scroll{max-height:650px;overflow:auto;border:1px solid var(--line)}details{max-width:680px}summary{cursor:pointer;color:var(--blue)}@media(max-width:760px){.stats{grid-template-columns:1fr}.provider:first-child{border-right:0;border-bottom:1px solid var(--line);padding-right:0}.provider:last-child{padding-left:0}.numbers{grid-template-columns:repeat(2,1fr)}table{min-width:980px}}
 </style></head><body><header><h1>智能座舱 1–MAX_LINE 跑测总览</h1><p>Qwen Audio 3.0 Realtime Flash 对比 Seed Duplex 3.0 · 同一源文本与冻结音频</p></header><main>
-<div class="note">每条 case 只暴露标签工具，函数名指标不是100选1准确率。Fail 包含严格参数不一致、未调用与响应超时；Invalid 是基础设施样本。</div>
+<div class="note">每条 case 只暴露标签工具，函数名指标不是完整候选目录的选择准确率。Fail 包含严格参数不一致、未调用与响应超时；Invalid 是基础设施样本。</div>
 <section class="stats" id="stats"></section>
 <h2>函数级对比</h2><div class="scroll"><table><thead><tr><th>函数</th><th>Case</th><th>Qwen P/F/I</th><th>Seed P/F/I</th><th>Pass 差值</th></tr></thead><tbody id="functions"></tbody></table></div>
 <h2>逐 Case</h2><div class="toolbar"><input id="search" placeholder="搜索源行、文本、函数、ASR 或参数"><select id="provider"><option value="both">两模型</option><option value="qwen">Qwen</option><option value="seed">Seed</option></select><select id="status"><option value="nonpass">默认：Fail + Invalid</option><option value="all">全部</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="invalid">Invalid</option></select><button id="reset">重置</button></div><p id="shown"></p><div class="scroll"><table><thead><tr><th>源行</th><th>输入 / 标签</th><th>Qwen</th><th>Seed</th><th>工件</th></tr></thead><tbody id="cases"></tbody></table></div>

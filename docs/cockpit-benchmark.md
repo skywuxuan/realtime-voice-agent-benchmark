@@ -1,121 +1,89 @@
-# Qwen Audio 3.0 智能座舱半双工 Benchmark
+# 智能座舱工具 Benchmark
 
-本文记录 `qwen-audio-3.0-realtime-flash` 的智能座舱单轮工具评测链路。输入来自文本 JSONL，经 Qwen TTS 冻结为语音；被测模型只接收 PCM 和工具 schema，不接收期望函数名或参数。
+本文只描述数据契约、编译方式和评价边界，不记录任何实际数据集内容或运行结果。
 
-## 1. 数据源与覆盖
+## 数据契约
 
-当前导入源：
+`dataset.cockpit` 接收两份外部 JSONL：
 
-- 工具协议：`common_func_100.jsonl`，100 个唯一非空函数，原始文件约 240KB。
-- 白名单测试集：`白名单_100.jsonl`，20,169 条。其中 20,029 条有期望工具，140 条是空函数名的 no-tool 样本。
-- 工具参数类型包括 string、integer、float、boolean、array 和嵌套 object。
+- 工具协议定义函数名、说明和输入参数。
+- case 数据定义用户文本及期望工具调用。
 
-导入器把 `input_param.<name>.define` 转成标准 JSON Schema。`choice` 转为 enum，`float` 转为 JSON Schema number，object/array 递归处理，顶层参数禁止未声明字段。源文件 hash、原始一基行号和选中记录保存在 compilation manifest。
+导入器把协议参数递归转换为严格 JSON Schema。枚举、整数、浮点数、布尔值、数组和
+对象保持原始类型，顶层拒绝未声明字段。标签与 schema 冲突的行会在 TTS 或模型连接前
+失败，不做静默类型转换。没有期望工具的样本应放入独立 False Tool Call Rate suite，
+不能混入 Task Completion 分母。
 
-No-tool 样本暂不混入当前 Task Completion 分母。它们需要独立的 False Tool Call Rate，不能按“缺少期望工具”直接判失败。
+转换目录包含缩进 JSON、JSONL、共享 prompt、工具 catalog、函数索引和带哈希的 manifest。
+这些目录属于本地数据产物，不进入版本控制。
 
-全量离线审计结果保存在 `reports/cockpit-source-audit-20260921.json`：20,029 条工具样本中 19,551 条符合协议 schema，478 条不符合。已发现整数/字符串类型冲突、数组被编码成字符串等问题。导入器不会静默修正；选中这些行时会在 TTS 和模型调用前失败。
+## Prompt 与 Oracle 隔离
 
-## 2. Prompt 与工具执行
+模型公开配置只包含 system prompt 和当前候选工具 schema。`expected_calls`、期望状态、
+失败计划和其他标签只供 evaluator 使用，不能进入模型上下文。
 
-system prompt 参考 `qwen-audio-agent/examples/smart-cockpit` 的原则：明确操作必须真实调用工具、参数只来自用户表达、失败不得声称成功、无操作意图不得调用工具。没有复制其中绑定另一套工具名的完整后台 prompt。
+system prompt 要求模型对明确且可执行的请求调用工具，严格依据用户表达抽取参数，失败时
+不得声称成功，没有操作意图时不得调用工具。
 
-`protocol_ack_v1` 是确定性测试后端：
+`protocol_ack_v1` 是确定性测试后端：它只执行模型实际产生的调用，按 catalog 校验函数名、
+参数类型、枚举和多余字段，再返回固定结构化结果，不执行真实车辆动作。
 
-1. 只执行模型实际产生的 `tool_call_end`。
-2. 根据冻结 catalog 校验函数名、参数类型、枚举和多余字段。
-3. 成功时返回固定“座舱操作已完成”，不执行真实车辆动作。
-4. catalog、调用、结果和空状态均封入 case 工件，离线 evaluator 可重放。
+## 候选工具拓扑
 
-期望函数名与参数只存在于 scenario oracle。`public_config()` 只向模型暴露 prompt 和候选工具 schema。
+编译器支持两种必须分开报告的拓扑：
 
-## 3. Audio 3.0 实测协议
+- `--expected-tool-only` 每个 case 只暴露标签工具，适合链路调试和参数抽取评价。由于函数名
+  已由 schema 泄露，该拓扑不能评价多工具路由能力。
+- `--expose-all-tools` 暴露完整候选目录，用于评价函数选择。工具数量、schema 总体积、响应
+  延迟和超时应一起记录，不能与单工具结果合并。
 
-参考工程确认该模型使用 16kHz PCM 输入、24kHz PCM 输出、`longanqian` 音色、`smart_turn` 和 Function Calling。实际连接进一步确认：
+若完整候选目录过大，应先用与标签无关的领域路由器生成固定候选组，再单独评价路由器和
+Realtime 模型。候选组不能利用 oracle 选择。
 
-- endpoint 与现有 Qwen Realtime adapter 相同。
-- session 必须包含 text modality；本项目请求 text + audio。
-- `session.updated` 不回显 input audio format，因此该字段保留为 unverified，voice、output format 和 turn detection 仍严格检查。
-- smart-turn 实际回显 2000ms 静音窗口，输入 profile 使用 2400ms 尾静音。服务端在话轮结束后自动创建首轮 response，客户端不能再为同一 user item 补发 `response.create`。
-- 首轮使用 session `tool_choice:auto`。收到工具调用后，客户端发送 `function_call_output`，再显式创建一次工具后续 response，并在 response 级携带 `tool_choice:none`。
-- 工具结果后的 response slot 可能存在短暂 busy 竞态，adapter 保存 raw refusal 并做 1.2s/2.6s/5s 有界重试。
-- adapter 0.4.0 曾错误请求 `create_response:false`；服务端未回显该字段，代码却在已自动首答后再次发送 `response.create`，导致每条多出一个工具 response。0.4.1 已按官方 Smart Cockpit 时序移除这次请求。
+## 编译
 
-配置分别位于 `configs/qwen-audio-3.0-realtime-flash-agent.yaml` 和 `configs/qwen-audio3-smart-turn.yaml`。
-时序依据固定为 QwenAudio 官方仓库 commit `149440d01d5f3ff4feaf2c6f904d05e6ac81d499` 的 [Smart Cockpit runner](https://github.com/QwenAudio/qwen-audio-agent/blob/149440d01d5f3ff4feaf2c6f904d05e6ac81d499/examples/smart-cockpit/bench/runner/run-realtime.mjs)，其中 smart-turn 输入只推送音频和静音，工具结果经 `sendFunctionOutput` 回注后才创建后续 response。
-
-## 4. 准备 Smoke Suite
-
-下面选择源测试集第 254、257、384、433、1250 行，覆盖能量回收、音量、悬架、驾驶模式和充电上限。第一次执行需要 `DASHSCOPE_API_KEY`，并显式允许补齐 TTS：
+仅做源审计：
 
 ```bash
 .venv/bin/python -m dataset.cockpit \
-  --protocol /path/to/common_func_100.jsonl \
-  --testset /path/to/白名单_100.jsonl \
-  --case-line 254 --case-line 257 --case-line 384 \
-  --case-line 433 --case-line 1250 \
-  --render-missing
+  --protocol /path/to/protocol.jsonl \
+  --testset /path/to/cases.jsonl \
+  --audit-only --audit-output /local/path/source-audit.json
 ```
 
-正式运行前去掉 `--render-missing` 再执行一次。输出必须显示 `cache_hits=5`、`provider_calls=0`。当前编译 suite 为：
-
-```text
-scenarios/agent/cockpit_compiled/cockpit_audio3_flash_smoke_v1/
-  0275f124dcab414abdbb/suite.yaml
-```
-
-运行命令：
-
-```bash
-.venv/bin/python -m benchmark.run \
-  --suite agent --model qwen-realtime \
-  --config configs/qwen-audio-3.0-realtime-flash-agent.yaml \
-  --profile configs/qwen-audio3-smart-turn.yaml \
-  --scenario scenarios/agent/cockpit_compiled/cockpit_audio3_flash_smoke_v1/0275f124dcab414abdbb/suite.yaml \
-  --output runs/my-audio3-cockpit-smoke --warmups 0
-```
-
-## 5. 2026-09-21 实测结果
-
-历史工件 `runs/qwen-audio3-cockpit-smoke-20260921-001/` 的5条均出现两次相同调用，严格 Task Completion 0/5。原始日志和 `eval_dce531cd2a086d329206` 保留，但官方时序核验及 raw wire 证明，首个 `response.created` 早于客户端额外发送的首轮 `response.create`；第二个工具 response 是 adapter 错误时序造成的污染，不能归因为模型重复调用率。
-
-0.4.1 修复后的完整 suite 工件为 `runs/qwen-audio3-cockpit-smoke-20260921-002/`：attempted=5、eligible=4、invalid=1、Task Completion=3/4，4个eligible均只有一次工具调用。目标电量 case 因 `input_deadline_missed_before_send` 保留为invalid；随后只对该invalid建立独立重试 `runs/qwen-audio3-cockpit-target-battery-retry-20260921-001/`，结果eligible/pass且只有一次调用。
-
-| 修复后指标 | 结果 |
-|---|---:|
-| First Call Tool Accuracy | 5/5 = 100% |
-| First Call Argument Accuracy | 4/5 = 80% |
-| Redundant Identical Call Rate | 0/5 = 0% |
-| Exact Tool Selection Accuracy | 5/5 = 100% |
-| Strict Task Completion Rate | 4/5 = 80% |
-
-这里的5个eligible样本由主 run 的4个eligible和目标电量独立重试组成，不改写主 run 的invalid。唯一失败是悬架 case：服务端转写为“把高度悬架高度调到中子。”，模型调用正确函数但额外传入 schema 不允许的 `action=SET`，确定性后端返回失败，最终口播也如实说明失败。
-
-主 run 离线重评 ID 为 `eval_0ad5644653947a034537`，目标电量重试为 `eval_5e5fe97e857a1e546489`；重复评价 ID 均不变，且未调用模型或工具服务。
-
-## 6. 批量分片
-
-先运行全量协议审计：
+转换并编译冻结音频 suite：
 
 ```bash
 .venv/bin/python -m dataset.cockpit \
-  --protocol /path/to/common_func_100.jsonl \
-  --testset /path/to/白名单_100.jsonl \
-  --audit-only --audit-output reports/cockpit-source-audit.json
+  --protocol /path/to/protocol.jsonl \
+  --testset /path/to/cases.jsonl \
+  --dataset-id local_cockpit_dataset \
+  --tts-profile configs/tts/qwen-cherry.yaml \
+  --target-model qwen-audio-3.0-realtime-flash \
+  --expected-tool-only --render-missing
 ```
 
-批量准备使用一基起始行和工具样本数量。导入器会跳过空函数名的 no-tool 行：
+首次渲染完成后，正式运行应使用 cache-only，确保不同 target model 复用完全相同的冻结 WAV。
 
-```bash
-.venv/bin/python -m dataset.cockpit \
-  --protocol /path/to/common_func_100.jsonl \
-  --testset /path/to/白名单_100.jsonl \
-  --start-line 1 --limit 100 \
-  --dataset-id cockpit_audio3_flash_shard_0001 \
-  --expose-all-tools \
-  --render-missing
-```
+## Realtime 时序
 
-`--expose-all-tools` 固定为 100 工具候选面，适合不同 shard 之间比较。默认模式只暴露所选 case 涉及的函数，适合 smoke 和调试。两种结果必须分组，不能合并准确率。
+Qwen smart-turn 由服务端创建首轮 response。收到 Function Calling 后，客户端发送一次
+`function_call_output`，再创建一次 `tool_choice=none` 的后续 response。客户端不得为同一
+user item 额外创建首轮 response，否则会污染调用序列。
 
-建议先处理或显式排除审计中的478条协议冲突，再冻结所有 shard 音频；随后用无 `--render-missing` 的 cache-only 编译确认并运行模型。每个 shard 使用独立 dataset_id 和 run 目录，失败与重复调用不得删除。140 条 no-tool 样本后续建立单独 suite，报告 False Tool Call Rate。
+Seed Duplex 3.0 使用官方 JSON Realtime 协议和 20ms PCM 分帧。输入结束或空闲时发送 mute，
+新输入到来时 unmute；工具结果按 `call_id` 批量回注。
+
+## 分片与恢复
+
+`scripts/cockpit_campaign.py` 按一基源行窗口运行。每个窗口独立编译、运行、封口和汇总，
+只在完整封口后推进 progress。恢复时会核验源转换、编译 manifest、run manifest、评价 ID
+和计数，再跳过完整前缀；不重写旧报告。
+
+cache-only campaign 可通过 `--await-cache` 等待另一个进程完成冻结音频，但自身没有 TTS
+凭据，也不得调用渲染服务。`scripts/stop_campaigns_at_line.py` 只依据已封口窗口停止后台任务。
+
+## 本地工件
+
+运行目录、转换数据、编译 suite、进度、分片汇总和 HTML/JSON 报告全部是本地工件，受
+`.gitignore` 保护。仓库只保存生成器、schema、配置和不含实际数据的自动化测试。
