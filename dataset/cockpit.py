@@ -7,12 +7,13 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import Field, JsonValue, field_validator
 
 from adapters.base import ToolDefinition
-from benchmark.contracts import Contract, Identifier, canonical_json, content_hash
+from benchmark.contracts import Contract, Identifier, canonical_json, content_hash, pretty_json
 from dataset.compiler import RenderCache, _write_immutable
 from dataset.schema import TTSProfile
 from events.replay import artifact_path, file_hash
@@ -24,6 +25,7 @@ from tools.catalog import ToolCatalog, ToolCatalogReference, validate_arguments
 from tools.scenarios import AgentScenario
 
 COCKPIT_COMPILER_VERSION = "cockpit-jsonl-compiler-0.1"
+COCKPIT_CONVERTER_VERSION = "cockpit-source-converter-0.2"
 DEFAULT_TARGET_MODEL = "qwen-audio-3.0-realtime-flash"
 COCKPIT_SYSTEM_PROMPT = """你是智能座舱语音助手，负责理解并执行用户明确提出的座舱操作。
 
@@ -73,6 +75,13 @@ class IndexedCase:
 
 
 @dataclass(frozen=True)
+class SelectedCase:
+    row: IndexedCase
+    sample_index: int = 1
+    duplicate_for_coverage: bool = False
+
+
+@dataclass(frozen=True)
 class CockpitCompilationResult:
     suite_path: Path
     scenario_paths: tuple[Path, ...]
@@ -82,6 +91,31 @@ class CockpitCompilationResult:
     cache_hits: int
     cache_misses: int
     provider_calls: int
+
+
+@dataclass(frozen=True)
+class CockpitConversionResult:
+    directory: Path
+    cases_path: Path
+    readable_cases_path: Path
+    functions_path: Path
+    prompt_path: Path
+    catalog_path: Path
+    manifest_path: Path
+    conversion_id: str
+    counts: dict[str, int]
+
+
+class ConvertedCockpitCase(Contract):
+    schema_version: Literal["0.1"] = "0.1"
+    case_id: Identifier
+    source_line_number: int = Field(gt=0)
+    user_text: str = Field(min_length=1)
+    dlg_function: str = ""
+    dlg_domain: str = ""
+    status: Literal["valid_tool", "invalid_tool", "no_tool"]
+    expected_call: SourceFunctionResult | None = None
+    validation_error: str | None = None
 
 
 def _read_jsonl(path: Path, model) -> tuple:
@@ -201,6 +235,90 @@ def select_cases(
     return selected
 
 
+def select_valid_source_window(
+    catalog: ToolCatalog,
+    rows: tuple[IndexedCase, ...],
+    *,
+    start_line: int,
+    source_line_count: int,
+) -> tuple[tuple[SelectedCase, ...], tuple[dict, ...]]:
+    if start_line < 1 or source_line_count < 1:
+        raise ValueError("start-line and source-line-count must be positive")
+    end_line = start_line + source_line_count - 1
+    window = tuple(row for row in rows if start_line <= row.line_number <= end_line)
+    if len(window) != source_line_count:
+        raise ValueError("source range extends beyond the testset")
+    definitions = {tool.name: tool for tool in catalog.tools}
+    selected = []
+    excluded = []
+    for row in window:
+        expected = row.case.function_result
+        if not expected.name:
+            excluded.append({"line_number": row.line_number, "status": "no_tool"})
+        elif expected.name not in definitions:
+            excluded.append({"line_number": row.line_number, "status": "invalid_tool"})
+        else:
+            try:
+                validate_arguments(definitions[expected.name].parameters, expected.param)
+            except (TypeError, ValueError):
+                excluded.append({"line_number": row.line_number, "status": "invalid_tool"})
+            else:
+                selected.append(SelectedCase(row))
+    return tuple(selected), tuple(excluded)
+
+
+def select_cases_per_function(
+    catalog: ToolCatalog,
+    rows: tuple[IndexedCase, ...],
+    per_function: int,
+    *,
+    repeat_sparse_functions: bool = False,
+) -> tuple[SelectedCase, ...]:
+    if per_function < 1:
+        raise ValueError("per-function must be positive")
+    definitions = {tool.name: tool for tool in catalog.tools}
+    candidates: dict[str, list[IndexedCase]] = {tool.name: [] for tool in catalog.tools}
+    seen_text: dict[str, set[str]] = {tool.name: set() for tool in catalog.tools}
+    for row in rows:
+        expected = row.case.function_result
+        if expected.name not in definitions:
+            continue
+        try:
+            validate_arguments(definitions[expected.name].parameters, expected.param)
+        except (TypeError, ValueError):
+            continue
+        if row.case.case in seen_text[expected.name]:
+            continue
+        seen_text[expected.name].add(row.case.case)
+        candidates[expected.name].append(row)
+
+    selected = []
+    sparse = {}
+    for tool in catalog.tools:
+        available = candidates[tool.name]
+        chosen = available[:per_function]
+        if len(chosen) < per_function:
+            sparse[tool.name] = len(chosen)
+            if not repeat_sparse_functions or not chosen:
+                continue
+        for index in range(per_function):
+            duplicate = index >= len(chosen)
+            row = chosen[index] if not duplicate else chosen[index % len(chosen)]
+            selected.append(
+                SelectedCase(
+                    row=row,
+                    sample_index=index + 1,
+                    duplicate_for_coverage=duplicate,
+                )
+            )
+    if sparse and not repeat_sparse_functions:
+        details = ", ".join(f"{name}={count}" for name, count in sorted(sparse.items()))
+        raise ValueError(f"not enough distinct valid cases per function: {details}")
+    if len(selected) != len(catalog.tools) * per_function:
+        raise ValueError("not every protocol function has a valid source case")
+    return tuple(selected)
+
+
 def audit_sources(catalog: ToolCatalog, rows: tuple[IndexedCase, ...]) -> dict:
     definitions = {tool.name: tool for tool in catalog.tools}
     failures = []
@@ -245,6 +363,186 @@ def audit_sources(catalog: ToolCatalog, rows: tuple[IndexedCase, ...]) -> dict:
     }
 
 
+def _catalog_reference(
+    catalog: ToolCatalog, *, asset_root: Path, catalog_root: Path
+) -> tuple[Path, ToolCatalogReference]:
+    catalog_directory = artifact_path(asset_root, catalog_root.as_posix())
+    catalog_path = catalog_directory / f"{catalog.catalog_id}.json"
+    _write_immutable(
+        catalog_path,
+        (canonical_json(catalog.model_dump(mode="json")) + "\n").encode("utf-8"),
+    )
+    return catalog_path, ToolCatalogReference(
+        catalog_id=catalog.catalog_id,
+        path=catalog_path.relative_to(asset_root).as_posix(),
+        sha256=file_hash(catalog_path),
+    )
+
+
+def convert_cockpit_sources(
+    *,
+    protocol_path: Path,
+    testset_path: Path,
+    dataset_id: str,
+    asset_root: Path,
+    conversion_root: Path = Path("datasets/cockpit/converted"),
+    catalog_root: Path = Path("datasets/catalogs/cockpit"),
+) -> CockpitConversionResult:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", dataset_id):
+        raise ValueError("dataset_id must be a safe path component")
+    asset_root = asset_root.resolve()
+    catalog = load_protocol(protocol_path)
+    rows = load_cases(testset_path)
+    _, catalog_reference = _catalog_reference(
+        catalog, asset_root=asset_root, catalog_root=catalog_root
+    )
+    definitions = {tool.name: tool for tool in catalog.tools}
+    converted = []
+    counts = collections.Counter()
+    by_function: dict[str, collections.Counter] = {
+        tool.name: collections.Counter() for tool in catalog.tools
+    }
+    for row in rows:
+        expected = row.case.function_result
+        error = None
+        if not expected.name:
+            status = "no_tool"
+            expected_call = None
+        elif expected.name not in definitions:
+            status = "invalid_tool"
+            expected_call = expected
+            error = "unknown expected function"
+        else:
+            expected_call = expected
+            try:
+                validate_arguments(definitions[expected.name].parameters, expected.param)
+                status = "valid_tool"
+            except (TypeError, ValueError) as validation_error:
+                status = "invalid_tool"
+                error = str(validation_error)
+        counts[status] += 1
+        if expected.name in by_function:
+            by_function[expected.name][status] += 1
+        converted.append(
+            ConvertedCockpitCase(
+                case_id=f"cockpit_source_{row.line_number:06d}",
+                source_line_number=row.line_number,
+                user_text=row.case.case,
+                dlg_function=row.case.dlg_function,
+                dlg_domain=row.case.dlg_domain,
+                status=status,
+                expected_call=expected_call,
+                validation_error=error,
+            )
+        )
+
+    source = {
+        "protocol": catalog.source,
+        "testset": {
+            "filename": testset_path.name,
+            "sha256": file_hash(testset_path),
+            "row_count": len(rows),
+        },
+    }
+    conversion_id = content_hash(
+        {
+            "converter_version": COCKPIT_CONVERTER_VERSION,
+            "converter_fingerprint": file_hash(Path(__file__)),
+            "dataset_id": dataset_id,
+            "source": source,
+            "catalog_sha256": catalog_reference.sha256,
+        }
+    )[:20]
+    directory = artifact_path(asset_root, conversion_root.as_posix()) / dataset_id / conversion_id
+    catalog_path = directory / "catalog.json"
+    cases_path = directory / "cases.jsonl"
+    readable_cases_path = directory / "cases.json"
+    functions_path = directory / "functions.json"
+    prompt_path = directory / "prompt.json"
+    manifest_path = directory / "manifest.json"
+    _write_immutable(
+        catalog_path,
+        pretty_json(catalog.model_dump(mode="json")).encode("utf-8"),
+    )
+    converted_catalog = ToolCatalogReference(
+        catalog_id=catalog.catalog_id,
+        path=catalog_path.relative_to(asset_root).as_posix(),
+        sha256=file_hash(catalog_path),
+    )
+    cases_payload = "".join(
+        canonical_json(case.model_dump(mode="json")) + "\n" for case in converted
+    ).encode("utf-8")
+    functions = {
+        "schema_version": "0.1",
+        "kind": "cockpit_function_index",
+        "catalog": converted_catalog.model_dump(mode="json"),
+        "functions": [
+            {
+                "index": index,
+                "name": tool.name,
+                "counts": dict(sorted(by_function[tool.name].items())),
+            }
+            for index, tool in enumerate(catalog.tools, 1)
+        ],
+    }
+    _write_immutable(cases_path, cases_payload)
+    _write_immutable(
+        readable_cases_path,
+        pretty_json([case.model_dump(mode="json") for case in converted]).encode("utf-8"),
+    )
+    _write_immutable(
+        functions_path, pretty_json(functions).encode("utf-8")
+    )
+    _write_immutable(
+        prompt_path,
+        pretty_json(
+            {
+                "schema_version": "0.1",
+                "kind": "cockpit_shared_prompt",
+                "instructions": COCKPIT_SYSTEM_PROMPT + "\n固定场景时间：未指定",
+                "tool_schema": converted_catalog.model_dump(mode="json"),
+                "note": "Each scenario selects its own candidate tools; see its scenario YAML.",
+            }
+        ).encode("utf-8"),
+    )
+    manifest = {
+        "schema_version": "0.1",
+        "kind": "converted_cockpit_sources",
+        "converter_version": COCKPIT_CONVERTER_VERSION,
+        "conversion_id": conversion_id,
+        "dataset_id": dataset_id,
+        "source": source,
+        "catalog": converted_catalog.model_dump(mode="json"),
+        "source_catalog_sha256": catalog_reference.sha256,
+        "prompt": "prompt.json",
+        "counts": {
+            "total": len(converted),
+            "valid_tool": counts["valid_tool"],
+            "invalid_tool": counts["invalid_tool"],
+            "no_tool": counts["no_tool"],
+        },
+        "files": {
+            "catalog.json": file_hash(catalog_path),
+            "cases.jsonl": file_hash(cases_path),
+            "cases.json": file_hash(readable_cases_path),
+            "functions.json": file_hash(functions_path),
+            "prompt.json": file_hash(prompt_path),
+        },
+    }
+    _write_immutable(manifest_path, pretty_json(manifest).encode("utf-8"))
+    return CockpitConversionResult(
+        directory=directory,
+        cases_path=cases_path,
+        readable_cases_path=readable_cases_path,
+        functions_path=functions_path,
+        prompt_path=prompt_path,
+        catalog_path=catalog_path,
+        manifest_path=manifest_path,
+        conversion_id=conversion_id,
+        counts=manifest["counts"],
+    )
+
+
 def _compiler_fingerprint() -> dict[str, str]:
     root = Path(__file__).parents[1]
     files = (
@@ -265,6 +563,9 @@ def compile_cockpit_dataset(
     case_lines: tuple[int, ...] = (),
     start_line: int | None = None,
     limit: int | None = None,
+    source_line_count: int | None = None,
+    per_function: int | None = None,
+    repeat_sparse_functions: bool = False,
     dataset_id: str,
     profile: TTSProfile,
     renderer: TTSRenderer,
@@ -276,16 +577,42 @@ def compile_cockpit_dataset(
     target_model: str = DEFAULT_TARGET_MODEL,
     input_chunk_ms: int = 200,
     expose_all_tools: bool = False,
+    expected_tool_only: bool = False,
     secrets: tuple[str, ...] = (),
 ) -> CockpitCompilationResult:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", dataset_id):
         raise ValueError("dataset_id must be a safe path component")
+    if expose_all_tools and expected_tool_only:
+        raise ValueError("expose-all-tools and expected-tool-only are mutually exclusive")
     asset_root = asset_root.resolve()
     catalog = load_protocol(protocol_path)
     rows = load_cases(testset_path)
-    selected = select_cases(rows, case_lines, start_line=start_line, limit=limit)
+    excluded: tuple[dict, ...] = ()
+    if source_line_count is not None:
+        if case_lines or limit is not None or per_function is not None or start_line is None:
+            raise ValueError("source-line-count requires start-line and no other selection")
+        selected, excluded = select_valid_source_window(
+            catalog, rows, start_line=start_line, source_line_count=source_line_count
+        )
+    elif per_function is not None:
+        if case_lines or start_line is not None or limit is not None:
+            raise ValueError("per-function cannot be combined with line or range selection")
+        selected = select_cases_per_function(
+            catalog,
+            rows,
+            per_function,
+            repeat_sparse_functions=repeat_sparse_functions,
+        )
+    else:
+        selected = tuple(
+            SelectedCase(row)
+            for row in select_cases(rows, case_lines, start_line=start_line, limit=limit)
+        )
+    if not selected:
+        raise ValueError("selected source range has no valid tool cases")
     definitions = {tool.name: tool for tool in catalog.tools}
-    for row in selected:
+    for selection in selected:
+        row = selection.row
         expected = row.case.function_result
         if expected.name not in definitions:
             raise ValueError(f"testset line {row.line_number}: unknown expected function")
@@ -296,19 +623,11 @@ def compile_cockpit_dataset(
                 f"testset line {row.line_number}: expected arguments violate protocol"
             ) from error
     selected_tool_names = tuple(
-        dict.fromkeys(row.case.function_result.name for row in selected)
+        dict.fromkeys(selection.row.case.function_result.name for selection in selected)
     )
 
-    catalog_directory = artifact_path(asset_root, catalog_root.as_posix())
-    catalog_path = catalog_directory / f"{catalog.catalog_id}.json"
-    _write_immutable(
-        catalog_path,
-        (canonical_json(catalog.model_dump(mode="json")) + "\n").encode("utf-8"),
-    )
-    catalog_reference = ToolCatalogReference(
-        catalog_id=catalog.catalog_id,
-        path=catalog_path.relative_to(asset_root).as_posix(),
-        sha256=file_hash(catalog_path),
+    catalog_path, catalog_reference = _catalog_reference(
+        catalog, asset_root=asset_root, catalog_root=catalog_root
     )
     cache = RenderCache(
         artifact_path(asset_root, render_root.as_posix()),
@@ -328,9 +647,15 @@ def compile_cockpit_dataset(
             "row_count": len(rows),
         },
         "selected": [
-            {"line_number": row.line_number, **row.case.model_dump(mode="json")}
-            for row in selected
+            {
+                "line_number": selection.row.line_number,
+                "sample_index": selection.sample_index,
+                "duplicate_for_coverage": selection.duplicate_for_coverage,
+                **selection.row.case.model_dump(mode="json"),
+            }
+            for selection in selected
         ],
+        "excluded": list(excluded),
     }
     compilation_id = content_hash(
         {
@@ -343,12 +668,17 @@ def compile_cockpit_dataset(
             "target_model": target_model,
             "system_prompt": COCKPIT_SYSTEM_PROMPT,
             "input_chunk_ms": input_chunk_ms,
-            "exposed_tools": "all" if expose_all_tools else selected_tool_names,
+            "exposed_tools": "all"
+            if expose_all_tools
+            else "expected_case"
+            if expected_tool_only
+            else selected_tool_names,
         }
     )[:20]
     directory = artifact_path(asset_root, compiled_root.as_posix()) / dataset_id / compilation_id
     scenario_paths = []
-    for row in selected:
+    for selection in selected:
+        row = selection.row
         rendered = cache.render_text(row.case.case)
         asset = AudioAsset(
             path=rendered.wav_path.relative_to(asset_root).as_posix(),
@@ -373,6 +703,15 @@ def compile_cockpit_dataset(
         )
         expected = row.case.function_result
         scenario_id = f"cockpit_{row.line_number:06d}_{expected.name}"
+        if selection.duplicate_for_coverage:
+            scenario_id += f"_repeat{selection.sample_index:02d}"
+        tools_enabled = (
+            ()
+            if expose_all_tools
+            else (expected.name,)
+            if expected_tool_only
+            else selected_tool_names
+        )
         scenario = AgentScenario(
             scenario_id=scenario_id,
             scenario_version=1,
@@ -380,9 +719,11 @@ def compile_cockpit_dataset(
             world={
                 "source_testset": testset_path.name,
                 "source_line_number": row.line_number,
+                "function_sample_index": selection.sample_index,
+                "duplicate_for_coverage": selection.duplicate_for_coverage,
             },
             user_turns=(row.case.case,),
-            tools_enabled=() if expose_all_tools else selected_tool_names,
+            tools_enabled=tools_enabled,
             tool_backend="protocol_ack_v1",
             tool_catalog=catalog_reference,
             expected_calls=({"tool": expected.name, "arguments": expected.param},),
@@ -419,7 +760,7 @@ def compile_cockpit_dataset(
         ),
     )
     _write_immutable(
-        source_path, (canonical_json(source_snapshot) + "\n").encode("utf-8")
+        source_path, pretty_json(source_snapshot).encode("utf-8")
     )
     manifest = {
         "schema_version": "0.1",
@@ -429,8 +770,32 @@ def compile_cockpit_dataset(
         "compilation_id": compilation_id,
         "dataset_id": dataset_id,
         "target_model": target_model,
-        "exposed_tool_count": len(catalog.tools) if expose_all_tools else len(selected_tool_names),
-        "exposed_tool_scope": "all" if expose_all_tools else "selected_cases",
+        "selection": {
+            "mode": "source_window" if source_line_count is not None else
+            "per_function" if per_function is not None else "lines_or_range",
+            "start_line": start_line if source_line_count is not None else None,
+            "source_line_count": source_line_count,
+            "excluded": {
+                "invalid_tool": sum(row["status"] == "invalid_tool" for row in excluded),
+                "no_tool": sum(row["status"] == "no_tool" for row in excluded),
+            },
+            "per_function": per_function,
+            "repeat_sparse_functions": repeat_sparse_functions,
+            "selected_count": len(selected),
+            "duplicate_for_coverage_count": sum(
+                selection.duplicate_for_coverage for selection in selected
+            ),
+        },
+        "exposed_tool_count": len(catalog.tools)
+        if expose_all_tools
+        else 1
+        if expected_tool_only
+        else len(selected_tool_names),
+        "exposed_tool_scope": "all"
+        if expose_all_tools
+        else "expected_case"
+        if expected_tool_only
+        else "selected_cases",
         "catalog": catalog_reference.model_dump(mode="json"),
         "tts_profile": profile.model_dump(mode="json"),
         "renderer_fingerprint": cache.fingerprint,
@@ -442,7 +807,7 @@ def compile_cockpit_dataset(
         },
     }
     manifest_path = directory / "manifest.json"
-    _write_immutable(manifest_path, (canonical_json(manifest) + "\n").encode("utf-8"))
+    _write_immutable(manifest_path, pretty_json(manifest).encode("utf-8"))
     return CockpitCompilationResult(
         suite_path=suite_path,
         scenario_paths=tuple(scenario_paths),
@@ -462,12 +827,20 @@ def main() -> None:
     parser.add_argument("--case-line", type=int, action="append")
     parser.add_argument("--start-line", type=int)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--source-line-count", type=int)
+    parser.add_argument("--per-function", type=int)
+    parser.add_argument("--repeat-sparse-functions", action="store_true")
     parser.add_argument("--dataset-id", default="cockpit_audio3_flash_smoke_v1")
     parser.add_argument("--target-model", default=DEFAULT_TARGET_MODEL)
     parser.add_argument("--input-chunk-ms", type=int, default=200)
     parser.add_argument("--expose-all-tools", action="store_true")
+    parser.add_argument("--expected-tool-only", action="store_true")
     parser.add_argument("--audit-only", action="store_true")
     parser.add_argument("--audit-output", type=Path)
+    parser.add_argument("--convert-only", action="store_true")
+    parser.add_argument(
+        "--conversion-root", type=Path, default=Path("datasets/cockpit/converted")
+    )
     parser.add_argument(
         "--tts-profile",
         type=Path,
@@ -481,9 +854,11 @@ def main() -> None:
     )
     parser.add_argument("--render-missing", action="store_true")
     args = parser.parse_args()
+    if args.audit_only and args.convert_only:
+        parser.error("audit-only and convert-only are mutually exclusive")
     if args.audit_only:
         audit = audit_sources(load_protocol(args.protocol), load_cases(args.testset))
-        payload = canonical_json(audit) + "\n"
+        payload = pretty_json(audit)
         if args.audit_output:
             args.audit_output.parent.mkdir(parents=True, exist_ok=True)
             args.audit_output.write_text(payload, encoding="utf-8")
@@ -496,6 +871,34 @@ def main() -> None:
         else:
             print(payload, end="")
         return
+    if args.convert_only:
+        try:
+            result = convert_cockpit_sources(
+                protocol_path=args.protocol,
+                testset_path=args.testset,
+                dataset_id=args.dataset_id,
+                asset_root=args.asset_root,
+                conversion_root=args.conversion_root,
+                catalog_root=args.catalog_root,
+            )
+        except ValueError as error:
+            parser.error(str(error))
+        print(
+            json.dumps(
+                {
+                    "conversion_id": result.conversion_id,
+                    "directory": str(result.directory),
+                    "cases": str(result.cases_path),
+                    "readable_cases": str(result.readable_cases_path),
+                    "functions": str(result.functions_path),
+                    "prompt": str(result.prompt_path),
+                    "catalog": str(result.catalog_path),
+                    **result.counts,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return
     profile = TTSProfile.model_validate(load_yaml(args.tts_profile))
     renderer = create_renderer(profile)
     secret = os.environ.get("DASHSCOPE_API_KEY", "").strip()
@@ -506,6 +909,9 @@ def main() -> None:
             case_lines=tuple(args.case_line or ()),
             start_line=args.start_line,
             limit=args.limit,
+            source_line_count=args.source_line_count,
+            per_function=args.per_function,
+            repeat_sparse_functions=args.repeat_sparse_functions,
             dataset_id=args.dataset_id,
             profile=profile,
             renderer=renderer,
@@ -517,6 +923,7 @@ def main() -> None:
             target_model=args.target_model,
             input_chunk_ms=args.input_chunk_ms,
             expose_all_tools=args.expose_all_tools,
+            expected_tool_only=args.expected_tool_only,
             secrets=(secret,) if secret else (),
         )
     except ValueError as error:

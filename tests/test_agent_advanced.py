@@ -64,7 +64,7 @@ class AdvancedSocket(FakeSocket):
         elif self.n == 2 and self.mode == "correction":
             self.call(rid, "train", TRAIN, "c2")
         elif self.n == 2 and self.mode == "multi_step":
-            row = self.outputs["c1"]["result"]["trains"][0]
+            row = self.outputs["c1"]["trains"][0]
             self.call(
                 rid,
                 "calendar",

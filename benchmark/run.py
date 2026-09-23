@@ -13,7 +13,7 @@ from pathlib import Path
 from adapters.base import SessionConfig
 from adapters.registry import resolve_adapter
 from benchmark.config import LatencyProfile
-from benchmark.contracts import canonical_json
+from benchmark.contracts import pretty_json
 from benchmark.evaluate import evaluate_run
 from benchmark.runner import run_case
 from events.redaction import Redactor
@@ -46,7 +46,7 @@ def implementation_hash() -> str:
 
 def write_index(root: Path, manifest: dict) -> None:
     temp = root / "manifest.json.tmp"
-    temp.write_text(canonical_json(manifest) + "\n", encoding="utf-8")
+    temp.write_text(pretty_json(manifest), encoding="utf-8")
     temp.replace(root / "manifest.json")
 
 
@@ -106,7 +106,7 @@ async def run_suite(
             "source_compilation": source_compilation,
         }
     )
-    (output / "config.json").write_text(canonical_json(root_config) + "\n", encoding="utf-8")
+    (output / "config.json").write_text(pretty_json(root_config), encoding="utf-8")
     jobs = [(scenarios[0], f"warmup_{index:03}", True) for index in range(1, warmups + 1)]
     jobs.extend(
         (scenario, f"attempt_{repeat:03}", False)
@@ -186,6 +186,7 @@ def main() -> None:
     parser.add_argument("--repetitions", type=int)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--case-id", action="append", help="agent suite case ID to run")
     parser.add_argument("--turn-mode", choices=["manual", "server_vad"])
     parser.add_argument(
         "--render-missing",
@@ -207,6 +208,8 @@ def main() -> None:
 
         run_cli(args)
         return
+    if args.case_id:
+        parser.error("case-id is supported only for agent suites")
     registration = resolve_adapter(args.model)
     secrets = tuple(os.environ.get(name, "").strip() for name in registration.credential_variables)
     if any(not value for value in secrets):

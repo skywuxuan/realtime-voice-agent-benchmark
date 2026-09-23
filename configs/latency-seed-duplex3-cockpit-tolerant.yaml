@@ -1,0 +1,8 @@
+version: latency_v0_1
+max_send_lateness_ms: 150.0
+max_send_duration_ms: 20.0
+max_playback_lateness_ms: 150.0
+tail_silence_ms: 1600
+playback_chunk_ms: 20
+artifact_queue_capacity: 4096
+artifact_max_bytes: 33554432

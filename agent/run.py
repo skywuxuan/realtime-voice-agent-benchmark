@@ -12,7 +12,7 @@ from adapters.registry import resolve_adapter
 from agent.evaluate import evaluate_suite
 from agent.runtime import run_agent_case
 from benchmark.config import LatencyProfile
-from benchmark.contracts import canonical_json
+from benchmark.contracts import pretty_json
 from benchmark.run import implementation_hash, write_index
 from events.redaction import Redactor
 from events.replay import artifact_path, file_hash
@@ -109,7 +109,7 @@ async def run_suite(
             "warmups": warmups,
         }
     )
-    (output / "config.json").write_text(canonical_json(clean) + "\n")
+    (output / "config.json").write_text(pretty_json(clean), encoding="utf-8")
     jobs = [(scenarios[0], f"warmup_{i:03d}", True) for i in range(1, warmups + 1)]
     jobs.extend(
         (s, f"attempt_{r:03d}", False) for r in range(1, repetitions + 1) for s in scenarios
@@ -165,10 +165,37 @@ async def run_suite(
 
 def run_cli(args):
     cases, repetitions = load_inputs(args.scenario, asset_root=args.asset_root)
-    if args.limit:
+    case_ids = tuple(getattr(args, "case_id", None) or ())
+    offset = getattr(args, "offset", None)
+    if case_ids:
+        if args.limit is not None or offset is not None:
+            raise ValueError("case-id cannot be combined with limit or offset")
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("case-id values must be unique")
+        missing = set(case_ids) - {case.scenario_id for case in cases}
+        if missing:
+            raise ValueError(f"unknown case-id values: {sorted(missing)}")
+        cases = tuple(case for case in cases if case.scenario_id in case_ids)
+    if offset is not None:
+        if offset < 0 or offset >= len(cases):
+            raise ValueError("offset must point to a suite case")
+        if args.limit is None:
+            raise ValueError("offset requires limit for bounded batches")
+        cases = cases[offset:]
+    if args.limit is not None:
         if args.limit < 1:
             raise ValueError("limit must be positive")
+        if offset is not None and args.limit > len(cases):
+            raise ValueError("batch extends beyond the suite")
         cases = cases[: args.limit]
+    timeout = getattr(args, "response_timeout_s", None)
+    if timeout is not None:
+        cases = tuple(
+            AgentScenario.model_validate(
+                {**case.model_dump(mode="json"), "response_timeout_s": timeout}
+            )
+            for case in cases
+        )
     registration = resolve_adapter(args.model)
     secrets = tuple(os.environ.get(name, "").strip() for name in registration.credential_variables)
     if any(not value for value in secrets):
@@ -204,6 +231,10 @@ def main():
     parser.add_argument("--repetitions", type=int)
     parser.add_argument("--warmups", type=int, default=0)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--offset", type=int)
+    parser.add_argument("--case-id", action="append")
+    parser.add_argument("--turn-mode", choices=["manual", "server_vad"])
+    parser.add_argument("--response-timeout-s", type=float)
     args = parser.parse_args()
     if args.repetitions is not None and args.repetitions < 1 or args.warmups < 0:
         parser.error("positive repetitions and nonnegative warmups required")
