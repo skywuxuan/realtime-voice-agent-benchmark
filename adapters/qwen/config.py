@@ -18,7 +18,9 @@ INPUT_FORMAT = AudioFormat(sample_rate_hz=16000)
 OUTPUT_FORMAT = AudioFormat(sample_rate_hz=24000)
 class QwenSettings(Contract):
     model: Literal[
-        "qwen-audio-3.0-realtime-flash", "qwen-audio-3.0-realtime-plus"
+        "qwen-audio-3.0-realtime-flash",
+        "qwen-audio-3.0-realtime-plus",
+        "qwen-audio-3.1-realtime-plus",
     ] = "qwen-audio-3.0-realtime-flash"
     # Only the verified Beijing endpoint is enabled in this profile.
     endpoint: Literal["wss://dashscope.aliyuncs.com/api-ws/v1/realtime"] = (
@@ -43,7 +45,7 @@ def session_update(config: SessionConfig, settings: QwenSettings) -> dict:
     if config.provider_options.get("tool_followup_choice", "auto") not in {"auto", "none"}:
         raise ValueError("tool_followup_choice must be auto or none")
     if config.vad:
-        raise ValueError("Qwen Audio 3.0 smart_turn profile does not accept VAD tuning")
+        raise ValueError("Qwen Audio Realtime smart_turn profile does not accept VAD tuning")
     turn_detection = {"type": "smart_turn"}
     body = {
         "modalities": ["audio", "text"],

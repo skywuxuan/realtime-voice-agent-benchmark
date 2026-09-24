@@ -186,6 +186,9 @@ def test_credentials_are_environment_only_and_endpoint_is_verified(monkeypatch, 
         QwenSettings(endpoint="wss://unverified.invalid/realtime")
     with pytest.raises(ValidationError):
         QwenSettings(model="unsupported-realtime")
+    assert QwenSettings(model="qwen-audio-3.1-realtime-plus").model == (
+        "qwen-audio-3.1-realtime-plus"
+    )
 
 
 @pytest.mark.parametrize("mode", ["manual", "server_vad"])
