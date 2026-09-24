@@ -5,7 +5,13 @@ import collections
 import json
 from pathlib import Path
 
-from agent.artifacts import ARCHIVE_NAME, case_timing, compact_case, latency_summary
+from agent.artifacts import (
+    artifact_display_path,
+    case_timing,
+    compact_case,
+    latency_summary,
+    resolve_bundle_reference,
+)
 from benchmark.contracts import pretty_json
 from events.replay import file_hash
 
@@ -60,7 +66,7 @@ def _argument_diff(expected: dict, actual: dict) -> dict:
 def _attempt_detail(case: dict, expected: dict) -> dict:
     attempt = case["selected_attempt"]
     root = Path(attempt["run"]) / attempt["artifact_path"]
-    if root.exists():
+    if (root / "scenario.json").exists():
         scenario = _read(root / "scenario.json")
         source_line_number = scenario["world"]["source_line_number"]
         expected_calls = scenario["expected_calls"]
@@ -70,13 +76,19 @@ def _attempt_detail(case: dict, expected: dict) -> dict:
         display_path = str(root)
     else:
         run_root = Path(attempt["run"])
-        compact = compact_case(run_root, attempt["artifact_path"])
+        bundle_ref = resolve_bundle_reference(run_root.as_posix())
+        if bundle_ref is not None:
+            run_root, run_name = bundle_ref
+            compact_path = f"{run_name}/{attempt['artifact_path']}"
+        else:
+            compact_path = attempt["artifact_path"]
+        compact = compact_case(run_root, compact_path)
         source_line_number = compact["source_line_number"]
         expected_calls = compact["expected_calls"]
         transcript = compact["transcript"]
         records = compact["tool_calls"]
         timing = compact["timing"]
-        display_path = f"{run_root / ARCHIVE_NAME}#{attempt['artifact_path']}"
+        display_path = artifact_display_path(run_root, compact_path)
     if source_line_number != case["source_line_number"]:
         raise ValueError("scenario source line differs from shard report")
     if expected_calls != [

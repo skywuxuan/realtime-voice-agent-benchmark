@@ -77,6 +77,12 @@ key 只由 `DASHSCOPE_API_KEY` 读取。传给 runner 的输入必须是冻结�
 冻结输入音频仍由场景中的内容寻址路径引用，不进入清理范围。需要重新离线评价时先执行
 `python -m agent.artifacts restore <run>`；恢复后的文件哈希必须与原 case 树一致。
 
+多个已封口的 compact run 可用 `scripts.bundle_campaign` 合并为一个 campaign bundle。Bundle
+根只保留 `bundle.json`、聚合 `results.json` 和一个 `evidence.tar`，原 run 名称作为归档
+前缀保留，旧报告引用可解析到 bundle。Bundle 深度校验通过后才删除源 run；恢复原始目录
+时按 `bundle.json` 的 `source_runs` 展开内层证据归档。大批量 cockpit campaign 默认按 500
+个源行分片，仍可通过 `--batch-size` 显式覆盖。
+
 离线评价先校验封口哈希，再核对每条执行都来自对应模型 `tool_call_end`，从 initial_state 按故障计划重放调用，验证每个 ToolResult、最终状态和 trace。修改 evaluator 时生成新的 `evaluations/<evaluation_id>/`，不修改原始工件。
 
 ## 指标边界与剩余工作

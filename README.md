@@ -91,6 +91,10 @@ Agent runtime 只执行模型实际产生的 `tool_call_end`。期望调用、�
 `datasets/rendered/`，不随 run 压缩或清理。所有运行目录、外部数据、转换产物和报告均为
 本地工件，不进入版本控制。
 
+多分片 campaign 封口后可进一步合并为 campaign bundle，减少 `runs/` 下的目录数量；bundle
+保留每个原始 run 的名称、索引和证据归档。cockpit campaign 默认每 500 个源行一个分片，
+需要更细粒度断点时可用 `--batch-size` 调小。
+
 主要设计文档：
 
 - [事件格式](docs/event-schema.md)

@@ -7,12 +7,14 @@ from agent.artifacts import (
     compact_case,
     compact_run,
     restore_run,
+    verify_bundle,
     verify_compact_run,
 )
 from benchmark.contracts import pretty_json
 from events.replay import file_hash
 from reports.cockpit_batch import _read_run
 from reports.cockpit_comparison import _attempt_detail
+from scripts.bundle_campaign import bundle_campaign
 
 
 def _write(path: Path, value: object) -> None:
@@ -119,6 +121,8 @@ def _fixture_run(root: Path) -> tuple[Path, dict[str, str]]:
         "agent": {"counts": {"pass": 1}, "cases": [evaluation]},
     }
     _write(root / "metrics.json", metrics)
+    _write(root / "config.json", {"fixture": True})
+    _write(root / "example-session-config.json", {"requested": {"fixture": True}})
     _write(root / "evaluations/eval_fixture/metrics.json", metrics)
     _write(
         root / "evaluations/eval_fixture/config.json",
@@ -189,3 +193,20 @@ def test_compaction_can_keep_loose_tree(tmp_path):
     compact_run(root, remove_loose=False)
     assert (root / "cases/case_001/attempt_001/events.jsonl").exists()
     assert verify_compact_run(root, deep=True)["attempt_count"] == 1
+
+
+def test_campaign_bundle_indexes_runs_and_removes_sources(tmp_path):
+    run = tmp_path / "runs" / "run_fixture"
+    _fixture_run(run)
+    compact_run(run)
+    bundle = tmp_path / "runs" / "bundles" / "fixture"
+
+    manifest = bundle_campaign(bundle_root=bundle, runs=(run,))
+
+    assert manifest["attempt_count"] == 1
+    assert not run.exists()
+    assert verify_bundle(bundle, deep=True)["attempt_count"] == 1
+    results = json.loads((bundle / "results.json").read_text())
+    artifact_path = results["cases"][0]["artifact_path"]
+    assert artifact_path.startswith("run_fixture/cases/")
+    assert compact_case(bundle, artifact_path)["source_line_number"] == 7

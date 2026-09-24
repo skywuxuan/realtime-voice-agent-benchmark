@@ -19,10 +19,13 @@ from benchmark.contracts import canonical_json, pretty_json
 from events.replay import file_hash
 
 ARCHIVE_NAME = "evidence.tar.gz"
+BUNDLE_ARCHIVE_NAME = "evidence.tar"
 COMPACT_MANIFEST = "compact.json"
+BUNDLE_MANIFEST = "bundle.json"
 EXAMPLE_SESSION_CONFIG = "example-session-config.json"
 RESULTS_NAME = "results.json"
 FORMAT_VERSION = "agent-compact-0.1"
+BUNDLE_FORMAT_VERSION = "agent-bundle-0.1"
 
 
 def _read_json(path: Path) -> object:
@@ -315,9 +318,19 @@ def _archive_records(path: Path) -> list[dict]:
     return records
 
 
+def _load_bundle_results(root: Path) -> dict:
+    bundle = verify_bundle(root)
+    results = _read_json(root / bundle["results"]["path"])
+    if results.get("kind") != "compact_agent_bundle_results":
+        raise ValueError(f"unsupported bundle results: {root}")
+    return results
+
+
 @lru_cache(maxsize=None)
 def _load_compact_results(root_value: str) -> dict:
     root = Path(root_value)
+    if (root / BUNDLE_MANIFEST).exists():
+        return _load_bundle_results(root)
     compact = verify_compact_run(root)
     results = _read_json(root / compact["results"]["path"])
     if results.get("kind") != "compact_agent_run_results":
@@ -335,6 +348,123 @@ def compact_case(root: str | Path, artifact_path: str) -> dict:
     if len(matches) != 1:
         raise ValueError(f"compact run does not contain one case: {artifact_path}")
     return matches[0]
+
+
+@lru_cache(maxsize=None)
+def resolve_bundle_reference(run_root_value: str) -> tuple[Path, str] | None:
+    """Map a deleted run path and case path to its campaign bundle."""
+    run_root = Path(run_root_value)
+    source = run_root.as_posix()
+    bundles_root = run_root.parent / "bundles"
+    if not bundles_root.is_dir():
+        return None
+    for bundle_root in sorted(path for path in bundles_root.iterdir() if path.is_dir()):
+        manifest_path = bundle_root / BUNDLE_MANIFEST
+        if not manifest_path.exists():
+            continue
+        manifest = _read_json(manifest_path)
+        for entry in manifest.get("source_runs", []):
+            if entry.get("path") == source:
+                return bundle_root, entry["name"]
+    return None
+
+
+def artifact_display_path(root: str | Path, artifact_path: str) -> str:
+    root = Path(root)
+    archive_name = (
+        _read_json(root / BUNDLE_MANIFEST).get("archive", {}).get("path", BUNDLE_ARCHIVE_NAME)
+        if (root / BUNDLE_MANIFEST).exists()
+        else ARCHIVE_NAME
+    )
+    return f"{root / archive_name}#{artifact_path}"
+
+
+def _bundle_file_records(root: Path, run_name: str) -> list[dict]:
+    records = []
+    for relative in (
+        "manifest.json",
+        "metrics.json",
+        "config.json",
+        "compact.json",
+        "example-session-config.json",
+        "results.json",
+        ARCHIVE_NAME,
+    ):
+        path = root / relative
+        if not path.is_file():
+            raise ValueError(f"compact run is missing bundle input: {path}")
+        records.append(
+            {
+                "path": f"{run_name}/{relative}",
+                "sha256": file_hash(path),
+                "bytes": path.stat().st_size,
+                "source": path,
+            }
+        )
+    return records
+
+
+def _write_bundle_archive(records: list[dict], destination: Path) -> None:
+    with destination.open("xb") as raw:
+        with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as archive:
+            for record in records:
+                info = tarfile.TarInfo(record["path"])
+                info.mode = 0o644
+                info.mtime = 0
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                info.size = record["bytes"]
+                with record["source"].open("rb") as stream:
+                    archive.addfile(info, stream)
+
+
+def _bundle_archive_records(path: Path) -> list[dict]:
+    records = []
+    with tarfile.open(path, "r") as archive:
+        for member in archive:
+            pure = PurePosixPath(member.name)
+            if (
+                not member.name
+                or pure.is_absolute()
+                or ".." in pure.parts
+                or len(pure.parts) < 2
+                or str(pure) != member.name
+            ):
+                raise ValueError(f"unsafe bundle archive member: {member.name}")
+            if not member.isreg():
+                raise ValueError(f"unsupported bundle archive member: {member.name}")
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise ValueError(f"unreadable bundle archive member: {member.name}")
+            digest, size = _file_digest(stream)
+            if size != member.size:
+                raise ValueError(f"bundle archive member size mismatch: {member.name}")
+            records.append({"path": member.name, "sha256": digest, "bytes": size})
+    return records
+
+
+def verify_bundle(root: str | Path, *, deep: bool = False) -> dict:
+    root = Path(root)
+    bundle = _read_json(root / BUNDLE_MANIFEST)
+    if bundle.get("format") != BUNDLE_FORMAT_VERSION or bundle.get("status") != "complete":
+        raise ValueError(f"unsupported or incomplete bundle: {root}")
+    for name in ("results",):
+        reference = bundle[name]
+        path = root / reference["path"]
+        if path.stat().st_size != reference["bytes"] or file_hash(path) != reference["sha256"]:
+            raise ValueError(f"bundle reference differs: {path}")
+    archive_ref = bundle["archive"]
+    archive = root / archive_ref["path"]
+    if archive.stat().st_size != archive_ref["bytes"] or file_hash(archive) != archive_ref["sha256"]:
+        raise ValueError(f"bundle archive differs: {archive}")
+    if deep:
+        records = _bundle_archive_records(archive)
+        if (
+            len(records) != archive_ref["member_count"]
+            or _tree_digest(records) != archive_ref["tree_sha256"]
+        ):
+            raise ValueError(f"bundle archive content differs: {archive}")
+    return bundle
 
 
 def verify_compact_run(root: str | Path, *, deep: bool = False) -> dict:

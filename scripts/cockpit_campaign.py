@@ -232,7 +232,7 @@ def main() -> None:
     parser.add_argument("--conversion-manifest", type=Path, required=True)
     parser.add_argument("--start-line", type=int, required=True)
     parser.add_argument("--end-line", type=int, required=True)
-    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--invalid-retries", type=int, default=2)
     parser.add_argument("--tts-attempts", type=int, default=6)
     parser.add_argument("--cache-only", action="store_true")
