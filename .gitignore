@@ -24,6 +24,7 @@ reports/cockpit-*.json
 reports/cockpit-*-views/
 reports/cockpit-*-shards/
 reports/cockpit-*-summary*/
+reports/cockpit-*-three-model*/
 reports/*.log
 reports/**/*.json
 reports/**/*.jsonl
