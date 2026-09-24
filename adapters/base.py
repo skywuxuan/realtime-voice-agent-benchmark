@@ -238,6 +238,10 @@ class RealtimeModelAdapter(ABC):
         """Non-secret backend/protocol metadata, independent of benchmark metrics."""
         return {}
 
+    def tool_dispatch_policy(self) -> Literal["response_end", "tool_call_end"]:
+        """When a normalized tool call is safe for the runner to execute."""
+        return "response_end"
+
     @abstractmethod
     async def _connect(self) -> SessionInfo: ...
 

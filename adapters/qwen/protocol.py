@@ -31,8 +31,22 @@ class Response:
 
 
 class QwenEventMapper:
-    def __init__(self, context: RecordingContext, sink: AdapterArtifactSink, capabilities):
+    def __init__(
+        self,
+        context: RecordingContext,
+        sink: AdapterArtifactSink,
+        capabilities,
+        *,
+        output_format=OUTPUT_FORMAT,
+        producer="adapter.qwen",
+        vad_detector="qwen_server_vad",
+        adapter_version=ADAPTER_VERSION,
+    ):
         self.context, self.sink, self.capabilities = context, sink, capabilities
+        self.output_format = output_format
+        self.producer = producer
+        self.vad_detector = vad_detector
+        self.adapter_version = adapter_version
         self.responses: dict[str, Response] = {}
         self.turn_mode = "manual"
         self.input_turns: set[str] = set()
@@ -74,7 +88,7 @@ class QwenEventMapper:
             **reading.model_dump(),
             event=kind,
             source=source,
-            producer="adapter.qwen",
+            producer=self.producer,
             timing={"basis": basis},
             raw_event_ref=raw_id,
             payload=payload,
@@ -173,7 +187,7 @@ class QwenEventMapper:
                     raw_id,
                     {
                         "vendor_session_id": data["session"]["id"],
-                        "adapter_version": ADAPTER_VERSION,
+                        "adapter_version": self.adapter_version,
                         "capabilities": self.capabilities().model_dump(mode="json"),
                     },
                     source="system",
@@ -204,7 +218,7 @@ class QwenEventMapper:
                 reading,
                 raw_id,
                 {
-                    "detector": "qwen_server_vad",
+                    "detector": self.vad_detector,
                     "vendor_item_id": item_id,
                     "vendor_audio_offset_ms": data.get(
                         "audio_start_ms" if kind.endswith("started") else "audio_end_ms"
@@ -297,11 +311,11 @@ class QwenEventMapper:
         if kind == "response.audio.delta":
             response = self._response(data)
             pcm = base64.b64decode(data["delta"], validate=True)
-            if not pcm or len(pcm) % OUTPUT_FORMAT.bytes_per_sample_frame:
+            if not pcm or len(pcm) % self.output_format.bytes_per_sample_frame:
                 raise ValueError("invalid or empty Qwen PCM delta")
             if response.audio_ended and response.status != "cancelled":
                 raise ValueError("audio arrived after a completed audio stream")
-            reference = await self.sink.store_audio(response.response_id, pcm, OUTPUT_FORMAT)
+            reference = await self.sink.store_audio(response.response_id, pcm, self.output_format)
             chunk = self.event(
                 "assistant_audio_chunk",
                 reading,
@@ -326,7 +340,7 @@ class QwenEventMapper:
                         raw_id,
                         {
                             "first_chunk_event_id": chunk.event_id,
-                            "audio_format": OUTPUT_FORMAT.model_dump(),
+                            "audio_format": self.output_format.model_dump(),
                         },
                         response_id=response.response_id,
                         turn_id=response.turn_id,

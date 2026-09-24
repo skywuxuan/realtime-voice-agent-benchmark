@@ -10,16 +10,17 @@ from benchmark.contracts import pretty_json
 
 def probe(alias: str, output: Path) -> dict:
     registration = resolve_adapter(alias)
+    live = alias in {"qwen-realtime", "step-realtime", "doubao-realtime"}
     result = {
         "schema_version": "0.1",
         "adapter": alias,
-        "status": "deferred" if alias != "qwen-realtime" else "live_supported",
+        "status": "live_supported" if live else "deferred",
         "credential_variables": registration.credential_variables,
         "config_path": str(registration.config_path),
         "capabilities": {"status": "unknown", "verification": "unverified"},
-        "reason": "official wire protocol must be verified before live adapter implementation"
-        if alias != "qwen-realtime"
-        else "use benchmark.qwen_probe for a real Qwen connection",
+        "reason": "use the provider-specific benchmark for a real connection"
+        if live
+        else "official wire protocol must be verified before live adapter implementation",
     }
     output.mkdir(parents=True, exist_ok=False)
     (output / "probe.json").write_text(pretty_json(result), encoding="utf-8")

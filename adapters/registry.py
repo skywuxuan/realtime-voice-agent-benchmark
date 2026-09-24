@@ -23,9 +23,12 @@ class AdapterRegistration:
 
             return create
         if self.alias == "step-realtime":
-            from adapters.step import StepRealtimeAdapter
+            from adapters.step import StepRealtimeAdapter, StepSettings
 
-            return lambda context, sink, clock: StepRealtimeAdapter(context, sink, clock=clock)
+            settings = StepSettings(model=config.model)
+            return lambda context, sink, clock: StepRealtimeAdapter(
+                context, sink, settings=settings, clock=clock
+            )
         if self.alias == "doubao-realtime":
             from adapters.doubao import DoubaoRealtimeAdapter, DoubaoSettings
 
@@ -47,7 +50,7 @@ def resolve_adapter(alias: str) -> AdapterRegistration:
         credentials = ("BYTEDANCE_LLM_API_KEY",)
     else:
         config = f"configs/{alias}.yaml"
-        credentials = ()
+        credentials = ("STEPFUN_API_KEY",)
     return AdapterRegistration(
         alias,
         Path(__file__).resolve().parents[1] / config,

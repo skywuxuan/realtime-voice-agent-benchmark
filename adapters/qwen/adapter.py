@@ -22,6 +22,8 @@ from adapters.base import (
 )
 from adapters.qwen.config import (
     ADAPTER_VERSION,
+    INPUT_FORMAT,
+    OUTPUT_FORMAT,
     SDK_SOURCE,
     QwenSettings,
     session_update,
@@ -71,15 +73,40 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         settings: QwenSettings | None = None,
         clock: Clock | None = None,
         connector: Callable | None = None,
+        api_key_env: str = "DASHSCOPE_API_KEY",
+        session_update_builder: Callable = session_update,
+        mapper_factory: Callable = QwenEventMapper,
+        input_format=INPUT_FORMAT,
+        output_format=OUTPUT_FORMAT,
+        provider_name: str = "qwen",
+        protocol_reference: str = SDK_SOURCE,
+        strict_echoes: tuple[str, ...] = ("voice", "output_audio_format"),
+        include_tool_output_item_id: bool = True,
+        server_response_policy: str = "server_smart_turn",
+        adapter_version: str = ADAPTER_VERSION,
+        allow_empty_manual_turn_detection: bool = False,
+        allow_tool_result_before_response_end: bool = False,
     ) -> None:
         self.settings = settings or QwenSettings()
         super().__init__(close_timeout_s=self.settings.close_timeout_s + 3)
         self.context, self.sink = context, sink
         self.clock = clock or SystemClock()
-        self._api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        self._api_key_env = api_key_env
+        self._api_key = os.environ.get(api_key_env, "").strip()
         if not self._api_key:
-            raise ValueError("DASHSCOPE_API_KEY must be set in the environment")
+            raise ValueError(f"{api_key_env} must be set in the environment")
         self._redactor = Redactor((self._api_key,))
+        self._session_update_builder = session_update_builder
+        self._input_format = input_format
+        self._output_format = output_format
+        self._provider_name = provider_name
+        self._protocol_reference = protocol_reference
+        self._strict_echoes = strict_echoes
+        self._include_tool_output_item_id = include_tool_output_item_id
+        self._server_response_policy = server_response_policy
+        self._adapter_version = adapter_version
+        self._allow_empty_manual_turn_detection = allow_empty_manual_turn_detection
+        self._allow_tool_result_before_response_end = allow_tool_result_before_response_end
         self._connector = connector
         self._ws = None
         self._incoming: asyncio.Queue = asyncio.Queue(self.settings.queue_capacity)
@@ -97,8 +124,9 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         self._followup_response_waiter: asyncio.Future | None = None
         self.high_watermarks = {"incoming": 0, "events": 0}
         self.effective_config: EffectiveConfig | None = None
-        self.mapper = QwenEventMapper(context, sink, self.capabilities)
+        self.mapper = mapper_factory(context, sink, self.capabilities)
         self._tool_results: dict[str, dict] = {}
+        self._pending_tool_followups: set[str] = set()
 
     def capabilities(self) -> CapabilityManifest:
         features = {}
@@ -118,7 +146,7 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
                 verification="experiment" if verified else "docs",
                 evidence=("current session raw/normalized event log",)
                 if verified
-                else (SDK_SOURCE,),
+                else (self._protocol_reference,),
             )
         return CapabilityManifest(features=features)
 
@@ -126,8 +154,9 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         return {
             "adapter_version": ADAPTER_VERSION,
             "endpoint": self.settings.endpoint,
+            "connection_url": self._connection_url(),
             "model": self.settings.model,
-            "protocol_reference": SDK_SOURCE,
+            "protocol_reference": self._protocol_reference,
             "api_version": None,
             "api_version_reason": "not exposed by the realtime session",
             "model_revision": None,
@@ -139,10 +168,13 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             "websocket_close_code": getattr(self._ws, "close_code", None),
             "server_finish_seen": self._finished.is_set(),
             "fatal_error_code": self._failure.code if self._failure else None,
-            "audio3_response_policy": "server_smart_turn"
+            "audio3_response_policy": self._server_response_policy
             if self.config is None or self.config.turn_mode == "server_vad"
             else "client_create_after_commit",
         }
+
+    def _connection_url(self) -> str:
+        return self.settings.endpoint + "?" + urlencode({"model": self.settings.model})
 
     def _fail(self, code: str, message: str) -> None:
         if self._failure is None:
@@ -186,7 +218,7 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
                 raise RuntimeError("install the Qwen extra: uv sync --extra qwen") from None
             connector = connect
         self._created = asyncio.get_running_loop().create_future()
-        url = self.settings.endpoint + "?" + urlencode({"model": self.settings.model})
+        url = self._connection_url()
         try:
             self._ws = await connector(
                 url,
@@ -200,16 +232,15 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             )
         except Exception as error:
             status = getattr(getattr(error, "response", None), "status_code", None)
-            raise QwenAdapterError(
-                "connect_failed", f"{type(error).__name__}; HTTP status={status}"
-            ) from None
+            self._fail("connect_failed", f"{type(error).__name__}; HTTP status={status}")
+            raise self._failure from None
         self._reader_task = asyncio.create_task(self._read_wire())
         self._processor_task = asyncio.create_task(self._process_wire())
         data, _, _ = await self._wait_control(self._created)
         return SessionInfo(
             session_id=self.context.session_id,
             vendor_session_id=data["session"]["id"],
-            adapter_version=ADAPTER_VERSION,
+            adapter_version=self._adapter_version,
         )
 
     async def _send_message(self, kind: str, *, command_id: str | None = None, **fields):
@@ -271,13 +302,33 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
                 break
         raise QwenAdapterError("response_slot_busy", "tool follow-up response remained busy")
 
+    def _schedule_tool_followup_response(self) -> None:
+        task = asyncio.create_task(self._create_tool_followup_response())
+
+        def done(completed: asyncio.Task) -> None:
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                self._fail("tool_followup_failed", str(error))
+
+        task.add_done_callback(done)
+
     async def _configure(self, config: SessionConfig) -> EffectiveConfig:
-        request = session_update(config, self.settings)
+        request = self._session_update_builder(config, self.settings)
         self._updated = asyncio.get_running_loop().create_future()
         await self._send_message("session.update", session=request)
         ack, reading, raw_id = await self._wait_control(self._updated)
         effective = ack["session"]
-        if (effective.get("turn_detection") is None) != (config.turn_mode == "manual"):
+        effective_turn_detection = effective.get("turn_detection")
+        if config.turn_mode == "manual":
+            turn_detection_matches = effective_turn_detection is None or (
+                self._allow_empty_manual_turn_detection
+                and effective_turn_detection == {"type": ""}
+            )
+        else:
+            turn_detection_matches = effective_turn_detection is not None
+        if not turn_detection_matches:
             raise QwenAdapterError(
                 "configuration_mismatch", "server did not confirm the requested turn mode"
             )
@@ -286,8 +337,7 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             for key, value in request.items()
             if key not in effective or effective[key] != value
         }
-        strict_echoes = ["voice", "output_audio_format"]
-        for key in strict_echoes:
+        for key in self._strict_echoes:
             if key in unverified:
                 raise QwenAdapterError(
                     "configuration_mismatch", f"server did not echo requested {key}"
@@ -295,12 +345,12 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         if "input_audio_format" in unverified:
             unverified["input_audio_format"] = {
                 "requested": request["input_audio_format"],
-                "effective": "not echoed by Audio 3.0 session.updated",
+                "effective": "not echoed by session.updated",
                 "basis": "model profile and accepted session.update",
             }
         unverified["audio_sample_rates"] = {
-            "input_hz": 16000,
-            "output_hz": 24000,
+            "input_hz": self._input_format.sample_rate_hz,
+            "output_hz": self._output_format.sample_rate_hz,
             "basis": "official PCM profile; not explicit in session echo",
         }
         result = EffectiveConfig(requested=request, effective=effective, unverified=unverified)
@@ -379,7 +429,9 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
                 raise QwenAdapterError("conflicting_tool_result", "call result changed")
             return
         response = self.mapper.responses[call["response_id"]]
-        if response.status != "completed":
+        if response.status != "completed" and not (
+            self._allow_tool_result_before_response_end and response.status == "in_progress"
+        ):
             raise QwenAdapterError(
                 "tool_response_not_completed", "wait for completed tool response"
             )
@@ -398,14 +450,15 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
             if result.status == "success"
             else {"error": result.error, "content": "座舱操作执行失败"}
         )
+        item = {
+            "type": "function_call_output",
+            "call_id": result.call_id,
+            "output": json.dumps(output, ensure_ascii=False),
+        }
+        if self._include_tool_output_item_id:
+            item["id"] = "tool_" + uuid.uuid4().hex
         command_id, started, _, _ = await self._send_message(
-            "conversation.item.create",
-            item={
-                "id": "tool_" + uuid.uuid4().hex,
-                "type": "function_call_output",
-                "call_id": result.call_id,
-                "output": json.dumps(output, ensure_ascii=False),
-            },
+            "conversation.item.create", item=item
         )
         self._emit(
             self.mapper.event(
@@ -427,7 +480,10 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
         # A newer real audio turn owns the next response. Inject the old tool
         # result into history, but do not start another answer to the old turn.
         if not pending and not superseded:
-            await self._create_tool_followup_response()
+            if response.status == "completed":
+                await self._create_tool_followup_response()
+            else:
+                self._pending_tool_followups.add(response.response_id)
 
     async def _read_wire(self) -> None:
         try:
@@ -508,6 +564,13 @@ class QwenRealtimeAdapter(RealtimeModelAdapter):
                         self._confirmed.add("server_vad")
                     if event.event == "assistant_cancelled" and event.payload.initiator == "client":
                         self._confirmed.add("client_cancel")
+                    if (
+                        event.event == "assistant_response_end"
+                        and event.response_id in self._pending_tool_followups
+                        and event.payload.status == "completed"
+                    ):
+                        self._pending_tool_followups.remove(event.response_id)
+                        self._schedule_tool_followup_response()
                 if kind == "session.created":
                     self._session_started = True
                     if not self._created.done():

@@ -132,7 +132,13 @@ async def run_agent_case(
         if event.event in {"assistant_audio_chunk", "assistant_audio_end", "assistant_cancelled"}:
             playback.submit(event)
         if event.event == "assistant_response_end":
-            completed.put_nowait(event)
+            completed.put_nowait(("response_end", event))
+        elif (
+            event.event == "tool_call_end"
+            and adapter is not None
+            and adapter.tool_dispatch_policy() == "tool_call_end"
+        ):
+            completed.put_nowait(("tool_call_end", event))
         if event.event == "error" and event.payload.fatal:
             fatal.set()
             completed.put_nowait(None)
@@ -173,17 +179,26 @@ async def run_agent_case(
 
     async def dispatch():
         while True:
-            end = await completed.get()
+            item = await completed.get()
+            if item is None:
+                raise ConnectionError("adapter_failed")
+            dispatch_kind, end = item
             if end is None or fatal.is_set():
                 raise ConnectionError("adapter_failed")
             if end.turn_id is None:
                 raise ValueError("ambiguous_agent_response_association")
-            calls = [
-                e
-                for e in observed
-                if e.event == "tool_call_end" and e.response_id == end.response_id
-            ]
-            if not calls or end.payload.status != "completed":
+            calls = (
+                [end]
+                if dispatch_kind == "tool_call_end"
+                else [
+                    e
+                    for e in observed
+                    if e.event == "tool_call_end" and e.response_id == end.response_id
+                ]
+            )
+            if dispatch_kind == "response_end" and (
+                not calls or end.payload.status != "completed"
+            ):
                 terminals[end.turn_id] = end
                 changed.set()
                 continue
