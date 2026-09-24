@@ -8,6 +8,7 @@ from argparse import Namespace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.artifacts import compact_run
 from agent.run import load_inputs, run_cli
 from benchmark.contracts import pretty_json
 from dataset.cockpit import compile_cockpit_dataset
@@ -117,6 +118,7 @@ def _run_cases(args, suite: Path, output: Path, case_ids: tuple[str, ...]) -> No
             repetitions=None,
             warmups=0,
             turn_mode=args.turn_mode,
+            artifact_mode="full",
         )
     )
 
@@ -206,6 +208,9 @@ def run_window(args, start: int, end: int, profile: TTSProfile) -> dict:
     else:
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(pretty_json(summary), encoding="utf-8")
+    if getattr(args, "artifact_mode", "compact") == "compact":
+        for run in runs:
+            compact_run(run)
     compilation = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     return {
         "start_line": start,
@@ -254,6 +259,7 @@ def main() -> None:
         default=Path("configs/qwen-audio-3.0-realtime-flash-agent.yaml"),
     )
     parser.add_argument("--latency-profile", type=Path, default=Path("configs/latency.yaml"))
+    parser.add_argument("--artifact-mode", choices=("full", "compact"), default="compact")
     args = parser.parse_args()
     if (
         args.batch_size < 1

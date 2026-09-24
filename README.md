@@ -84,10 +84,12 @@ Agent runtime 只执行模型实际产生的 `tool_call_end`。期望调用、�
 
 真实运行要求进程环境存在 `DASHSCOPE_API_KEY`。程序不自动读取 `.env`，也不接受命令行明文 key。
 
-每次运行必须使用新输出目录。完整 case 保存 config、scenario、raw/normalized events、
-input/output WAV、transcript、tool calls/results、state、trial 和哈希 manifest。失败与 invalid
-同样保留，离线重评不会改写原始 case。所有运行目录、外部数据、转换产物和报告均为本地
-工件，不进入版本控制。
+每次运行必须使用新输出目录。Agent 大批量运行可使用 `--artifact-mode compact`；运行与
+评价完成后生成可读 `results.json` 和校验过的 `evidence.tar.gz`，再移除松散 case 文件。
+归档保留原始 config、scenario、raw/normalized events、PCM、transcript、工具记录和历史评价，
+可用 `python -m agent.artifacts restore <run>` 恢复。冻结 TTS 缓存位于
+`datasets/rendered/`，不随 run 压缩或清理。所有运行目录、外部数据、转换产物和报告均为
+本地工件，不进入版本控制。
 
 主要设计文档：
 

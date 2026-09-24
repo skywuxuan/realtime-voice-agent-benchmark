@@ -9,6 +9,7 @@ from pathlib import Path
 
 from adapters.base import SessionConfig
 from adapters.registry import resolve_adapter
+from agent.artifacts import compact_run
 from agent.evaluate import evaluate_suite
 from agent.runtime import run_agent_case
 from benchmark.config import LatencyProfile
@@ -78,6 +79,7 @@ async def run_suite(
     repetitions=1,
     warmups=0,
     secrets=(),
+    artifact_mode="full",
 ):
     if not scenarios or repetitions < 1 or warmups < 0:
         raise ValueError("invalid agent suite plan")
@@ -160,7 +162,10 @@ async def run_suite(
         )
     manifest["status"] = "complete"
     write_index(output, manifest)
-    return evaluate_suite(output)
+    result = evaluate_suite(output)
+    if artifact_mode == "compact":
+        compact_run(output)
+    return result
 
 
 def run_cli(args):
@@ -214,6 +219,7 @@ def run_cli(args):
             repetitions=args.repetitions or repetitions,
             warmups=args.warmups,
             secrets=secrets,
+            artifact_mode=getattr(args, "artifact_mode", "full"),
         )
     )
     print({"evaluation_id": result["evaluation_id"], **result["agent"]["counts"]})
@@ -235,6 +241,7 @@ def main():
     parser.add_argument("--case-id", action="append")
     parser.add_argument("--turn-mode", choices=["manual", "server_vad"])
     parser.add_argument("--response-timeout-s", type=float)
+    parser.add_argument("--artifact-mode", choices=("full", "compact"), default="full")
     args = parser.parse_args()
     if args.repetitions is not None and args.repetitions < 1 or args.warmups < 0:
         parser.error("positive repetitions and nonnegative warmups required")

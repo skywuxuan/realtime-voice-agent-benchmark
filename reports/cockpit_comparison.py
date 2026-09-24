@@ -5,6 +5,7 @@ import collections
 import json
 from pathlib import Path
 
+from agent.artifacts import ARCHIVE_NAME, case_timing, compact_case, latency_summary
 from benchmark.contracts import pretty_json
 from events.replay import file_hash
 
@@ -59,15 +60,29 @@ def _argument_diff(expected: dict, actual: dict) -> dict:
 def _attempt_detail(case: dict, expected: dict) -> dict:
     attempt = case["selected_attempt"]
     root = Path(attempt["run"]) / attempt["artifact_path"]
-    scenario = _read(root / "scenario.json")
-    if scenario["world"]["source_line_number"] != case["source_line_number"]:
+    if root.exists():
+        scenario = _read(root / "scenario.json")
+        source_line_number = scenario["world"]["source_line_number"]
+        expected_calls = scenario["expected_calls"]
+        transcript = _read(root / "transcript.json")
+        records = _read(root / "tool_calls.json")
+        timing = case_timing(root / "events.jsonl")
+        display_path = str(root)
+    else:
+        run_root = Path(attempt["run"])
+        compact = compact_case(run_root, attempt["artifact_path"])
+        source_line_number = compact["source_line_number"]
+        expected_calls = compact["expected_calls"]
+        transcript = compact["transcript"]
+        records = compact["tool_calls"]
+        timing = compact["timing"]
+        display_path = f"{run_root / ARCHIVE_NAME}#{attempt['artifact_path']}"
+    if source_line_number != case["source_line_number"]:
         raise ValueError("scenario source line differs from shard report")
-    if scenario["expected_calls"] != [
+    if expected_calls != [
         {"tool": expected["name"], "arguments": expected["param"]}
     ]:
         raise ValueError("sealed scenario label differs from converted source")
-    transcript = _read(root / "transcript.json")
-    records = _read(root / "tool_calls.json")
     calls = [
         {
             "tool": record["tool"],
@@ -115,12 +130,13 @@ def _attempt_detail(case: dict, expected: dict) -> dict:
             if event["event"] == "assistant_text_done"
         ],
         "calls": calls,
+        "timing": timing,
         "first_call_argument_diff": _argument_diff(
             expected["param"], first["arguments"]
         )
         if first and first["tool"] == expected["name"]
         else None,
-        "artifact_path": str(root),
+        "artifact_path": display_path,
         "evaluation_id": attempt["evaluation_id"],
     }
 
@@ -146,6 +162,7 @@ def _provider_summary(cases: list[dict], provider: str) -> dict:
         "failure_categories": dict(
             sorted(collections.Counter(row["failure_category"] for row in rows).items())
         ),
+        "latency": latency_summary(rows),
     }
 
 
@@ -299,9 +316,9 @@ def _write_html(output: Path, summary: dict, functions: list[dict], cases: list[
 <h2>逐 Case</h2><div class="toolbar"><input id="search" placeholder="搜索源行、文本、函数、ASR 或参数"><select id="provider"><option value="both">两模型</option><option value="qwen">Qwen</option><option value="seed">Seed</option></select><select id="status"><option value="nonpass">默认：Fail + Invalid</option><option value="all">全部</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="invalid">Invalid</option></select><button id="reset">重置</button></div><p id="shown"></p><div class="scroll"><table><thead><tr><th>源行</th><th>输入 / 标签</th><th>Qwen</th><th>Seed</th><th>工件</th></tr></thead><tbody id="cases"></tbody></table></div>
 </main><script id="report-data" type="application/json">PAYLOAD</script><script>
 const data=JSON.parse(document.getElementById('report-data').textContent);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const fmt=n=>typeof n==='number'?n.toLocaleString():n;const pct=n=>n==null?'—':(n*100).toFixed(1)+'%';
-document.getElementById('stats').innerHTML=['qwen','seed'].map(k=>{const x=data.summary.providers[k],name=k==='qwen'?'Qwen Audio 3.0 Realtime Flash':'Seed Duplex 3.0';return `<div class="provider"><h2>${name}</h2><div class="numbers"><div class="metric"><strong class="pass">${fmt(x.pass)}</strong><span>Pass</span></div><div class="metric"><strong class="fail">${fmt(x.fail)}</strong><span>Fail</span></div><div class="metric"><strong class="invalid">${fmt(x.invalid)}</strong><span>Invalid</span></div><div class="metric"><strong>${pct(x.eligible_pass_rate)}</strong><span>Eligible 通过率</span></div></div><p>Eligible ${fmt(x.eligible)} · 实际 attempts ${fmt(x.actual_attempts)} · 重复调用 ${fmt(x.duplicate_calls)}</p></div>`}).join('');
+document.getElementById('stats').innerHTML=['qwen','seed'].map(k=>{const x=data.summary.providers[k],name=k==='qwen'?'Qwen Audio 3.0 Realtime Flash':'Seed Duplex 3.0',fc=x.latency.speech_end_to_final_tool_call,tts=x.latency.speech_end_to_first_tts_frame;return `<div class="provider"><h2>${name}</h2><div class="numbers"><div class="metric"><strong class="pass">${fmt(x.pass)}</strong><span>Pass</span></div><div class="metric"><strong class="fail">${fmt(x.fail)}</strong><span>Fail</span></div><div class="metric"><strong class="invalid">${fmt(x.invalid)}</strong><span>Invalid</span></div><div class="metric"><strong>${pct(x.eligible_pass_rate)}</strong><span>Eligible 通过率</span></div></div><p>Function Call P50 ${fmt(fc.p50_ms)} ms · P95 ${fmt(fc.p95_ms)} ms · TTS 首帧 P50 ${fmt(tts.p50_ms)} ms · P95 ${fmt(tts.p95_ms)} ms</p><p>Eligible ${fmt(x.eligible)} · 实际 attempts ${fmt(x.actual_attempts)} · 重复调用 ${fmt(x.duplicate_calls)}</p></div>`}).join('');
 document.getElementById('functions').innerHTML=data.functions.map(x=>`<tr><td><code>${esc(x.function)}</code></td><td>${x.cases}</td><td><span class="pass">${x.qwen.pass}</span> / <span class="fail">${x.qwen.fail}</span> / <span class="invalid">${x.qwen.invalid}</span></td><td><span class="pass">${x.seed.pass}</span> / <span class="fail">${x.seed.fail}</span> / <span class="invalid">${x.seed.invalid}</span></td><td>${x.pass_delta_qwen_minus_seed>0?'+':''}${x.pass_delta_qwen_minus_seed}</td></tr>`).join('');
-const search=document.getElementById('search'),provider=document.getElementById('provider'),status=document.getElementById('status');function badge(x){return `<span class="pill ${x.status}">${esc(x.status)}</span> <small>${esc(x.failure_category)}</small>`}function detail(x){return `${badge(x)}<br><b>ASR</b> ${esc(x.asr_text.join(' / ')||'—')}<br><b>调用</b> <code>${esc(JSON.stringify(x.calls))}</code><br><b>回复</b> ${esc(x.assistant_text.join(' / ')||'—')}`}function render(){const q=search.value.trim().toLowerCase(),pk=provider.value,sk=status.value;const rows=data.cases.filter(x=>x.status==='valid_tool').filter(x=>{const ps=pk==='both'?[x.providers.qwen,x.providers.seed]:[x.providers[pk]];const ok=sk==='all'||(sk==='nonpass'?ps.some(p=>p.status!=='pass'):ps.some(p=>p.status===sk));return ok&&(!q||JSON.stringify(x).toLowerCase().includes(q))});document.getElementById('shown').textContent=`显示 ${rows.length} / ${data.summary.source_counts.valid_tool} 条有效工具 case`;document.getElementById('cases').innerHTML=rows.map(x=>`<tr><td>${x.source_line_number}<br><code>${esc(x.expected_call.name)}</code></td><td>${esc(x.user_text)}<br><code>${esc(JSON.stringify(x.expected_call.param))}</code></td><td>${detail(x.providers.qwen)}</td><td>${detail(x.providers.seed)}</td><td><details><summary>路径</summary><code>Qwen: ${esc(x.providers.qwen.artifact_path)}\nSeed: ${esc(x.providers.seed.artifact_path)}</code></details></td></tr>`).join('')}[search,provider,status].forEach(x=>x.addEventListener('input',render));document.getElementById('reset').onclick=()=>{search.value='';provider.value='both';status.value='nonpass';render()};render();
+const search=document.getElementById('search'),provider=document.getElementById('provider'),status=document.getElementById('status');function badge(x){return `<span class="pill ${x.status}">${esc(x.status)}</span> <small>${esc(x.failure_category)}</small>`}function detail(x){const fc=x.timing.speech_end_to_final_tool_call_ms,tts=x.timing.speech_end_to_first_tts_frame_ms;return `${badge(x)}<br><b>ASR</b> ${esc(x.asr_text.join(' / ')||'—')}<br><b>调用</b> <code>${esc(JSON.stringify(x.calls))}</code><br><b>延时</b> Function Call ${fc==null?'—':fmt(Math.round(fc))+' ms'} · TTS 首帧 ${tts==null?'—':fmt(Math.round(tts))+' ms'}<br><b>回复</b> ${esc(x.assistant_text.join(' / ')||'—')}`}function render(){const q=search.value.trim().toLowerCase(),pk=provider.value,sk=status.value;const rows=data.cases.filter(x=>x.status==='valid_tool').filter(x=>{const ps=pk==='both'?[x.providers.qwen,x.providers.seed]:[x.providers[pk]];const ok=sk==='all'||(sk==='nonpass'?ps.some(p=>p.status!=='pass'):ps.some(p=>p.status===sk));return ok&&(!q||JSON.stringify(x).toLowerCase().includes(q))});document.getElementById('shown').textContent=`显示 ${rows.length} / ${data.summary.source_counts.valid_tool} 条有效工具 case`;document.getElementById('cases').innerHTML=rows.map(x=>`<tr><td>${x.source_line_number}<br><code>${esc(x.expected_call.name)}</code></td><td>${esc(x.user_text)}<br><code>${esc(JSON.stringify(x.expected_call.param))}</code></td><td>${detail(x.providers.qwen)}</td><td>${detail(x.providers.seed)}</td><td><details><summary>路径</summary><code>Qwen: ${esc(x.providers.qwen.artifact_path)}\nSeed: ${esc(x.providers.seed.artifact_path)}</code></details></td></tr>`).join('')}[search,provider,status].forEach(x=>x.addEventListener('input',render));document.getElementById('reset').onclick=()=>{search.value='';provider.value='both';status.value='nonpass';render()};render();
 </script></body></html>"""
     (output / "index.html").write_text(
         template.replace("MAX_LINE", str(summary["scope"]["source_lines"][1])).replace(

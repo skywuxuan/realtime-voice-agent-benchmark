@@ -5,6 +5,12 @@ import collections
 import json
 from pathlib import Path
 
+from agent.artifacts import (
+    COMPACT_MANIFEST,
+    EXAMPLE_SESSION_CONFIG,
+    load_compact_results,
+    verify_compact_run,
+)
 from benchmark.contracts import pretty_json
 from dataset.compiler import _write_immutable
 from events.replay import file_hash
@@ -27,14 +33,25 @@ def _read_run(root: Path) -> tuple[dict, dict]:
     cases = metrics["agent"]["cases"]
     if len(entries) != len(cases):
         raise ValueError(f"run index differs from evaluation: {root}")
+    compact = None
+    compact_cases = {}
+    if not (root / "cases").exists() and (root / COMPACT_MANIFEST).exists():
+        compact = verify_compact_run(root)
+        compact_cases = {
+            row["artifact_path"]: row for row in load_compact_results(root)["cases"]
+        }
     for entry, case in zip(entries, cases):
+        observed_manifest = (
+            compact_cases.get(entry["path"], {}).get("attempt_manifest_sha256")
+            if compact
+            else file_hash(root / entry["path"] / "manifest.json")
+        )
         if (
             entry["scenario_id"] != case["scenario_id"]
             or entry["attempt_id"] != case["attempt_id"]
             or entry["warmup"]
             or case["warmup"]
-            or entry["manifest_sha256"]
-            != file_hash(root / entry["path"] / "manifest.json")
+            or entry["manifest_sha256"] != observed_manifest
         ):
             raise ValueError(f"case index differs from sealed evaluation: {root}")
     return manifest, metrics
@@ -100,19 +117,24 @@ def summarize(
     for index, root in enumerate(runs):
         manifest, metrics = _read_run(root)
         timing_profile = None
-        for entry in manifest["attempts"]:
-            case_root = root / entry["path"]
-            sealed = json.loads((case_root / "manifest.json").read_text(encoding="utf-8"))
-            config_file = sealed["files"].get("config.json")
-            if config_file is None:
-                continue
-            config_path = case_root / "config.json"
-            if file_hash(config_path) != config_file["sha256"]:
-                raise ValueError(f"timing config differs from sealed case: {case_root}")
-            current = json.loads(config_path.read_text(encoding="utf-8"))["profile"]
-            if timing_profile is not None and timing_profile != current:
-                raise ValueError(f"run contains mixed timing profiles: {root}")
-            timing_profile = current
+        if (root / COMPACT_MANIFEST).exists() and not (root / "cases").exists():
+            timing_profile = json.loads(
+                (root / COMPACT_MANIFEST).read_text(encoding="utf-8")
+            ).get("timing_profile")
+        else:
+            for entry in manifest["attempts"]:
+                case_root = root / entry["path"]
+                sealed = json.loads((case_root / "manifest.json").read_text(encoding="utf-8"))
+                config_file = sealed["files"].get("config.json")
+                if config_file is None:
+                    continue
+                config_path = case_root / "config.json"
+                if file_hash(config_path) != config_file["sha256"]:
+                    raise ValueError(f"timing config differs from sealed case: {case_root}")
+                current = json.loads(config_path.read_text(encoding="utf-8"))["profile"]
+                if timing_profile is not None and timing_profile != current:
+                    raise ValueError(f"run contains mixed timing profiles: {root}")
+                timing_profile = current
         reference = {
             "path": str(root),
             "run_id": manifest["run_id"],
@@ -262,10 +284,14 @@ def write_readable_views(
     )
     main_manifest = json.loads((runs[0] / "manifest.json").read_text(encoding="utf-8"))
     first_case = runs[0] / main_manifest["attempts"][0]["path"]
-    case_manifest = json.loads((first_case / "manifest.json").read_text(encoding="utf-8"))
-    prompt_file = first_case / "session_config.json"
-    if case_manifest["files"]["session_config.json"]["sha256"] != file_hash(prompt_file):
-        raise ValueError("example session prompt differs from sealed case")
+    if first_case.exists():
+        case_manifest = json.loads((first_case / "manifest.json").read_text(encoding="utf-8"))
+        prompt_file = first_case / "session_config.json"
+        if case_manifest["files"]["session_config.json"]["sha256"] != file_hash(prompt_file):
+            raise ValueError("example session prompt differs from sealed case")
+    else:
+        verify_compact_run(runs[0])
+        prompt_file = runs[0] / EXAMPLE_SESSION_CONFIG
     source_files["example-session-prompt.json"] = prompt_file
     provenance = {}
     for name, source in source_files.items():

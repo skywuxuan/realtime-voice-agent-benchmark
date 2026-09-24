@@ -188,6 +188,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--case-id", action="append", help="agent suite case ID to run")
     parser.add_argument("--turn-mode", choices=["manual", "server_vad"])
+    parser.add_argument("--artifact-mode", choices=("full", "compact"), default="full")
     parser.add_argument(
         "--render-missing",
         action="store_true",
@@ -208,6 +209,8 @@ def main() -> None:
 
         run_cli(args)
         return
+    if args.artifact_mode != "full":
+        parser.error("compact artifacts are currently supported only for agent suites")
     if args.case_id:
         parser.error("case-id is supported only for agent suites")
     registration = resolve_adapter(args.model)

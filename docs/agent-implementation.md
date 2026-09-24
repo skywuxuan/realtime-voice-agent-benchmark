@@ -70,6 +70,13 @@ key 只由 `DASHSCOPE_API_KEY` 读取。传给 runner 的输入必须是冻结�
 
 新命令支持单场景和 suite，统一保存到 `cases/<scenario_id>/<attempt_id>/`，run 根有索引、metrics 和 report；旧单场景根目录录制仍支持重评。每个 case 工件包含 config、scenario、session_config、raw_events、events、input/output/output_received WAV、transcript、tool_calls.json、tool_results.json、state.json、trial 与哈希 manifest。tool 调用、执行、结果也在统一 events.jsonl 内。
 
+大批量 suite 可启用 `--artifact-mode compact`。runner 先按普通目录完成封口和评价，再生成
+规整的 `results.json`、示例会话配置和 `evidence.tar.gz`。归档逐文件核对内容树哈希，重复
+内容使用 tar hard link，只在深度验证通过后删除松散 `cases/`。`results.json` 直接保存
+`user_audio_end` 到最终 `tool_call_end`、首个 `assistant_audio_start` 的延时和证据时间戳。
+冻结输入音频仍由场景中的内容寻址路径引用，不进入清理范围。需要重新离线评价时先执行
+`python -m agent.artifacts restore <run>`；恢复后的文件哈希必须与原 case 树一致。
+
 离线评价先校验封口哈希，再核对每条执行都来自对应模型 `tool_call_end`，从 initial_state 按故障计划重放调用，验证每个 ToolResult、最终状态和 trace。修改 evaluator 时生成新的 `evaluations/<evaluation_id>/`，不修改原始工件。
 
 ## 指标边界与剩余工作
