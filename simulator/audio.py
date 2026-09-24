@@ -39,6 +39,48 @@ def wav_bytes(pcm: bytes, format: AudioFormat) -> bytes:
     return output.getvalue()
 
 
+def resample_pcm16(pcm: bytes, source_rate: int, target_rate: int) -> bytes:
+    """Resample mono PCM16 without adding a runtime audio dependency."""
+    if source_rate <= 0 or target_rate <= 0:
+        raise ValueError("sample rates must be positive")
+    if len(pcm) % 2:
+        raise ValueError("PCM16 must contain whole samples")
+    if source_rate == target_rate:
+        return pcm
+    source = array.array("h")
+    source.frombytes(pcm)
+    if sys.byteorder != "little":
+        source.byteswap()
+    if not source:
+        raise ValueError("PCM16 must not be empty")
+    target_count = max(1, round(len(source) * target_rate / source_rate))
+    result = array.array("h")
+    for index in range(target_count):
+        position = index * source_rate / target_rate
+        left = min(int(position), len(source) - 1)
+        right = min(left + 1, len(source) - 1)
+        fraction = position - left
+        value = round(source[left] + (source[right] - source[left]) * fraction)
+        result.append(max(-32768, min(32767, value)))
+    if sys.byteorder != "little":
+        result.byteswap()
+    return result.tobytes()
+
+
+def resample_wav_bytes(data: bytes, target_rate: int) -> bytes:
+    """Convert a mono PCM16 WAV to a target sample rate."""
+    with wave.open(io.BytesIO(data), "rb") as wav:
+        source_format = (wav.getnchannels(), wav.getsampwidth(), wav.getcomptype())
+        if source_format != (1, 2, "NONE"):
+            raise ValueError("WAV must be mono PCM16")
+        source_rate = wav.getframerate()
+        pcm = wav.readframes(wav.getnframes())
+    return wav_bytes(
+        resample_pcm16(pcm, source_rate, target_rate),
+        AudioFormat(sample_rate_hz=target_rate),
+    )
+
+
 def estimate_speech_bounds(
     pcm: bytes, sample_rate: int, *, window_ms: int = 20
 ) -> tuple[tuple[int, int], dict]:

@@ -144,6 +144,7 @@ def run_window(args, start: int, end: int, profile: TTSProfile) -> dict:
                 allow_render=not args.cache_only,
                 target_model=args.target_model,
                 input_chunk_ms=args.input_chunk_ms,
+                input_sample_rate_hz=getattr(args, "input_sample_rate_hz", None),
                 expected_tool_only=True,
                 secrets=(os.environ["DASHSCOPE_API_KEY"],)
                 if not args.cache_only
@@ -242,6 +243,7 @@ def main() -> None:
     parser.add_argument("--adapter", default="qwen-realtime")
     parser.add_argument("--target-model", default="qwen-audio-3.0-realtime-flash")
     parser.add_argument("--input-chunk-ms", type=int, default=200)
+    parser.add_argument("--input-sample-rate-hz", type=int)
     parser.add_argument("--turn-mode", choices=["manual", "server_vad"])
     parser.add_argument("--dataset-prefix", default="cockpit_audio3")
     parser.add_argument("--artifact-prefix", default="qwen-audio3")
@@ -266,6 +268,7 @@ def main() -> None:
         or args.invalid_retries < 0
         or args.tts_attempts < 1
         or args.input_chunk_ms < 1
+        or (args.input_sample_rate_hz is not None and args.input_sample_rate_hz < 1)
         or args.cache_wait_s <= 0
     ):
         parser.error("positive batch/TTS attempts and nonnegative invalid retries required")
@@ -281,6 +284,7 @@ def main() -> None:
         "model": args.target_model,
         "adapter": args.adapter,
         "input_chunk_ms": args.input_chunk_ms,
+        "input_sample_rate_hz": args.input_sample_rate_hz,
         "turn_mode": args.turn_mode,
         "cache_only": args.cache_only,
         "audio_renderer": {
@@ -306,6 +310,7 @@ def main() -> None:
             "model": previous.get("model"),
             "adapter": previous.get("adapter", "qwen-realtime"),
             "input_chunk_ms": previous.get("input_chunk_ms", 200),
+            "input_sample_rate_hz": previous.get("input_sample_rate_hz"),
             "turn_mode": previous.get("turn_mode"),
             "cache_only": previous.get("cache_only", False),
             "naming": previous.get(

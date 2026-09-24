@@ -21,6 +21,7 @@ from renderers.base import TTSRenderer
 from renderers.registry import create_renderer
 from scenarios.loader import load_yaml
 from scenarios.schema import AudioAsset, Suite
+from simulator.audio import resample_wav_bytes
 from tools.catalog import ToolCatalog, ToolCatalogReference, validate_arguments
 from tools.scenarios import AgentScenario
 
@@ -576,6 +577,7 @@ def compile_cockpit_dataset(
     allow_render: bool,
     target_model: str = DEFAULT_TARGET_MODEL,
     input_chunk_ms: int = 200,
+    input_sample_rate_hz: int | None = None,
     expose_all_tools: bool = False,
     expected_tool_only: bool = False,
     secrets: tuple[str, ...] = (),
@@ -584,6 +586,8 @@ def compile_cockpit_dataset(
         raise ValueError("dataset_id must be a safe path component")
     if expose_all_tools and expected_tool_only:
         raise ValueError("expose-all-tools and expected-tool-only are mutually exclusive")
+    if input_sample_rate_hz is not None and input_sample_rate_hz < 1:
+        raise ValueError("input sample rate must be positive")
     asset_root = asset_root.resolve()
     catalog = load_protocol(protocol_path)
     rows = load_cases(testset_path)
@@ -666,6 +670,7 @@ def compile_cockpit_dataset(
             "catalog_sha256": catalog_reference.sha256,
             "tts_profile_sha256": cache.profile_hash,
             "target_model": target_model,
+            "input_sample_rate_hz": input_sample_rate_hz or profile.sample_rate_hz,
             "system_prompt": COCKPIT_SYSTEM_PROMPT,
             "input_chunk_ms": input_chunk_ms,
             "exposed_tools": "all"
@@ -680,12 +685,43 @@ def compile_cockpit_dataset(
     for selection in selected:
         row = selection.row
         rendered = cache.render_text(row.case.case)
+        target_rate = input_sample_rate_hz or profile.sample_rate_hz
+        source_rate = profile.sample_rate_hz
+        asset_path = rendered.wav_path
+        asset_bounds = rendered.speech_bounds_samples
+        transform = None
+        if target_rate != source_rate:
+            source_sha256 = file_hash(rendered.wav_path)
+            transform_id = content_hash(
+                {"source_sha256": source_sha256, "source_rate": source_rate, "target_rate": target_rate}
+            )[:64]
+            derived_directory = (
+                artifact_path(asset_root, render_root.as_posix())
+                / f"{profile.profile_id}_resampled_{target_rate}_v1"
+            )
+            asset_path = derived_directory / f"{transform_id}.wav"
+            if not asset_path.exists():
+                _write_immutable(
+                    asset_path,
+                    resample_wav_bytes(rendered.wav_path.read_bytes(), target_rate),
+                )
+            asset_bounds = tuple(
+                round(bound * target_rate / source_rate)
+                for bound in rendered.speech_bounds_samples
+            )
+            transform = {
+                "kind": "linear_pcm16_resample",
+                "source_path": rendered.wav_path.relative_to(asset_root).as_posix(),
+                "source_sha256": source_sha256,
+                "source_sample_rate_hz": source_rate,
+                "target_sample_rate_hz": target_rate,
+            }
         asset = AudioAsset(
-            path=rendered.wav_path.relative_to(asset_root).as_posix(),
-            sha256=file_hash(rendered.wav_path),
+            path=asset_path.relative_to(asset_root).as_posix(),
+            sha256=file_hash(asset_path),
             reference_text=row.case.case,
-            speech_bounds_samples=rendered.speech_bounds_samples,
-            sample_rate_hz=profile.sample_rate_hz,
+            speech_bounds_samples=asset_bounds,
+            sample_rate_hz=target_rate,
             provenance={
                 "kind": "frozen_tts",
                 "speaker_id": profile.voice,
@@ -699,6 +735,7 @@ def compile_cockpit_dataset(
                 "metadata_path": rendered.metadata_path.relative_to(asset_root).as_posix(),
                 "source_testset_sha256": source_snapshot["testset"]["sha256"],
                 "source_line_number": row.line_number,
+                **({"input_audio_transform": transform} if transform else {}),
             },
         )
         expected = row.case.function_result
@@ -770,6 +807,7 @@ def compile_cockpit_dataset(
         "compilation_id": compilation_id,
         "dataset_id": dataset_id,
         "target_model": target_model,
+        "input_sample_rate_hz": input_sample_rate_hz or profile.sample_rate_hz,
         "selection": {
             "mode": "source_window" if source_line_count is not None else
             "per_function" if per_function is not None else "lines_or_range",
