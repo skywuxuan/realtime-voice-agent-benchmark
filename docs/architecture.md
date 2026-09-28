@@ -1,8 +1,8 @@
 # Realtime Voice Agent Benchmark 架构提案
 
-状态：核心事件、场景、Qwen/Seed Adapter、文本到冻结音频编译、Realtime runner、Agent
-runtime 和离线 evaluator 已实现；Step 等未核验 provider 保持 deferred。本文描述架构和
-证据边界，不记录实际测试内容或结果。
+状态：核心事件、场景、Qwen/Seed/Step Adapter、文本到冻结音频编译、Realtime runner、
+Agent runtime 和离线 evaluator 已实现。本文描述架构和证据边界；本地五模型阶段工件入口见
+[五模型座舱交接](handoff-five-model-cockpit-2026-09-28.md)。
 
 本项目评测中文完整语音 Agent，分别输出 Realtime、Agent、Response Quality 指标，不计算 Overall Score。第一版只接 Qwen 商业 Realtime，跑通少量 latency、interruption、user backchannel 场景。本文描述目标架构；当前可运行范围及命令见 [README](../README.md)。
 
@@ -118,7 +118,9 @@ flowchart TD
     S --> U[Audio Simulator / Future User Simulator]
     U --> A[RealtimeModelAdapter]
     A --> Q[Qwen Realtime]
-    A --> L[Later: Step / Doubao / Cascade]
+    A --> D[Seed Duplex 3.0]
+    A --> ST[StepAudio 3 Realtime]
+    A --> L[Later: other providers / Cascade]
     A --> B[Event Bus]
     U --> B
     S --> B
@@ -155,7 +157,8 @@ Runner 只处理通用配置、生命周期、能力检查、预算和超时。�
 | `configs/` | 模型/session/evaluation profiles；只引用环境变量名 |
 | `tests/` | 事件 fixtures、fake transport、计时与状态反例及工具闭环；默认不调用收费 API |
 
-初期只创建用到的模块。Step、Doubao、Cascade 到对应阶段再建，避免先堆空实现。
+只创建已核验且实际使用的 provider 模块；未来 provider 与 Cascade 到对应阶段再接入，
+避免先堆空实现。
 
 ### Phase 4 已实现的边界
 

@@ -1,6 +1,7 @@
 # 智能座舱工具 Benchmark
 
-本文只描述数据契约、编译方式和评价边界，不记录任何实际数据集内容或运行结果。
+本文只描述数据契约、编译方式和评价边界。用户要求的本地五模型阶段结果与逐条工件入口集中
+记录在 [五模型座舱交接](handoff-five-model-cockpit-2026-09-28.md)，不在其他设计文档复制。
 
 ## 数据契约
 
@@ -73,6 +74,9 @@ user item 额外创建首轮 response，否则会污染调用序列。
 
 Seed Duplex 3.0 使用官方 JSON Realtime 协议和 20ms PCM 分帧。输入结束或空闲时发送 mute，
 新输入到来时 unmute；工具结果按 `call_id` 批量回注。
+
+StepAudio 3 使用 24 kHz PCM 和 manual commit。收到完整 `tool_call_end` 后可立即派发并回注
+工具结果，不强制等待原 response 完成；server VAD 仅作为显式实验 track。
 
 ## 分片与恢复
 

@@ -2,7 +2,9 @@
 
 面向中文实时语音 Agent 的可观测评测框架。Realtime、Agent 和 Response Quality 独立报告，原始 wire event、归一化事件、PCM、工具调用和离线评价均保存为可重放工件。
 
-当前 Qwen live 路径只支持 Qwen Audio 3.0 Realtime Flash/Plus；默认配置为 Flash、`longanqian`、16 kHz PCM 输入、24 kHz PCM 输出和 `smart_turn`。
+当前 Qwen live 路径支持 Qwen Audio 3.0 Realtime Flash/Plus 和 Qwen Audio 3.1 Realtime
+Plus；默认配置为 3.0 Flash、`longanqian`、16 kHz PCM 输入、24 kHz PCM 输出和
+`smart_turn`。Seed Duplex 3.0 与 StepAudio 3 Realtime 也有独立 live adapter。
 
 ## 安装与检查
 
@@ -20,16 +22,18 @@ uv run --locked pytest -q
 |---|---|
 | `events/` | 事件 schema、双时钟、脱敏、录制、PCM 引用和封口回放 |
 | `scenarios/` | latency、interruption、backchannel、duplex 和 Agent 场景契约 |
-| `adapters/qwen/` | Qwen Audio 3.0 WebSocket、smart-turn、取消、工具调用和结果回注 |
+| `adapters/qwen/` | Qwen Audio 3.0/3.1 WebSocket、smart-turn、取消、工具调用和结果回注 |
 | `adapters/doubao/` | Seed Duplex 3.0 官方 JSON Realtime 协议、工具调用和结果回注 |
+| `adapters/step/` | StepAudio 3 Realtime WebSocket、24 kHz PCM、manual commit 和工具闭环 |
 | `simulator/` | 绝对 deadline 输入调度、语音边界和虚拟播放 |
 | `dataset/`、`renderers/` | 文本数据校验、会话前 TTS、不可变内容缓存和场景编译 |
 | `benchmark/`、`evaluator/` | 在线运行、离线有效性检查、分母、指标和版本化重评 |
 | `tools/`、`agent/` | 确定性工具、真实模型调用驱动、状态重放和 Task Completion |
 | `reports/` | 自包含 HTML 报告 |
 
-Step 保留显式 deferred 边界。Seed Duplex 3.0 协议按官方文档实现；真实运行需要有效的
-服务权限，鉴权失败会作为连接错误写入本地工件。
+Qwen、Seed 与 Step 的协议均隔离在 provider adapter。真实运行需要对应服务权限，连接或
+鉴权失败会作为基础设施错误写入本地工件。当前 provider 边界见
+[Provider Adapter](docs/provider-adapters.md)。
 
 ## 离线 Smoke
 
@@ -82,7 +86,8 @@ Agent runtime 只执行模型实际产生的 `tool_call_end`。期望调用、�
 
 ## 凭据与工件
 
-真实运行要求进程环境存在 `DASHSCOPE_API_KEY`。程序不自动读取 `.env`，也不接受命令行明文 key。
+真实运行要求进程环境存在对应的 `DASHSCOPE_API_KEY`、`BYTEDANCE_LLM_API_KEY` 或
+`STEPFUN_API_KEY`。程序不自动读取 `.env`，也不接受命令行明文 key。
 
 每次运行必须使用新输出目录。Agent 大批量运行可使用 `--artifact-mode compact`；运行与
 评价完成后生成可读 `results.json` 和校验过的 `evidence.tar.gz`，再移除松散 case 文件。
@@ -102,3 +107,4 @@ Agent runtime 只执行模型实际产生的 `tool_call_end`。期望调用、�
 - [评测计划](docs/benchmark-plan.md)
 - [Qwen Audio 3.0 接入](docs/qwen-integration.md)
 - [Provider 边界](docs/provider-adapters.md)
+- [五模型座舱交接](docs/handoff-five-model-cockpit-2026-09-28.md)

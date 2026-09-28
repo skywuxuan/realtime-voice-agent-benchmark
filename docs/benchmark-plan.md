@@ -1,6 +1,8 @@
 # Benchmark 定义与分阶段实施计划
 
-状态：**Phase 1–8 已有不同程度实现和实测；文本源、会话前 TTS、冻结缓存及半/全双工 Scenario 编译已实现；Phase 9–11 只有明确的 deferred adapter 边界**。更新日期：2026-09-21。
+状态：**Phase 1–8 已有不同程度实现和实测；文本源、会话前 TTS、冻结缓存及半/全双工
+Scenario 编译已实现；Qwen、Seed、Step live adapter 已实现，其他 provider 仍需先核验协议**。
+状态核对日期：2026-09-28。
 
 系统结构见 [architecture](architecture.md)，事件与场景字段见 [event-schema](event-schema.md)，商业 Qwen 的实际协议依据见 [qwen-integration](qwen-integration.md)。
 

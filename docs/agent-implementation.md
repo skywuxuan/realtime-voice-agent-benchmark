@@ -1,6 +1,6 @@
 # Phase 7/8 Mock Tools 与 Voice Agent
 
-已实现由 Adapter 工具事件驱动的音频 Agent 运行路径、Qwen Audio 3.0 工具协议映射、
+已实现由 Adapter 工具事件驱动的音频 Agent 运行路径、Qwen Audio 3.0/3.1 与 Step 工具协议映射、
 确定性工具运行时及封口工件离线重评。
 
 ## 纠正旧实现
@@ -13,7 +13,7 @@
 
 ```text
 冻结中文音频 → RealtimeModelAdapter → tool_call_end
-  → 等待对应 response 完成 → 参数校验 / Mock Tool 执行
+  → adapter policy 决定立即派发或等待 response 完成 → 参数校验 / Mock Tool 执行
   → tool_execution_start/end + tool_result → Adapter.send_tool_result
   → 下一 response 的流式音频 → 虚拟播放 → 封口工件
   → 离线状态重放 / 参数与序列 / Task Completion
@@ -22,6 +22,10 @@
 `agent.runtime.public_config()` 只将公开 system prompt、固定业务时间和已启用工具定义交给 adapter。答案、期望状态、故障计划不进入模型配置。输入逐个冻结 WAV 发送；`turn_triggers` 可以等待前一回答播放结束，或绑定前一轮某工具的 execution_start，在其执行期间发送改口音频。语音开始时工具仍在等待的证据由 evaluator 离线复核，缺失则 invalid。
 
 每个 attempt 新建 MockToolServer，载入 initial_state。接收任务持续记录音频和事件，工具结果由另一执行路径回传。`tool_delays` 在 tool_execution_start 后施加固定异步等待，音频收发继续运行；执行本身按 FIFO 串行化，故障调用次数可重放。Timeout/HTTP 500 等仍为预登记模拟故障，不冒充真实网络异常或超时后已提交事务。
+
+Qwen/Seed 默认在 response end 后派发工具；Step 的 response 可能在完整 tool call 后继续长音频，
+因此声明 `tool_dispatch_policy=tool_call_end`，允许工具结果在原 response 尚未结束时回注。该差异
+属于 adapter 能力，不在 runner 中按 provider 名称分支。
 
 ## 工具与故障
 

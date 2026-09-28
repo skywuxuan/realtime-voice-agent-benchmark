@@ -1,6 +1,7 @@
-# Qwen Audio 3.0 Realtime 接入
+# Qwen Audio Realtime 接入
 
-本文只描述 `qwen-audio-3.0-realtime-flash` 和 `qwen-audio-3.0-realtime-plus`。CLI alias 为 `qwen-realtime`，工件必须保存实际模型 ID。
+本文描述 `qwen-audio-3.0-realtime-flash`、`qwen-audio-3.0-realtime-plus` 和
+`qwen-audio-3.1-realtime-plus`。CLI alias 为 `qwen-realtime`，工件必须保存实际模型 ID。
 
 ## 官方依据
 
@@ -33,11 +34,14 @@ session.update(tool_choice=auto, smart_turn)
   -> final audio/text response
 ```
 
-Adapter 0.5.0 只接受 Audio 3.0 Flash/Plus。工具结果后的 response slot 如短暂 busy，会保存原始拒绝并按 1.2s、2.6s、5s 有界重试；不重发工具副作用。
+Adapter 0.5.0 接受 Audio 3.0 Flash/Plus 与 Audio 3.1 Plus。工具结果后的 response slot 如
+短暂 busy，会保存原始拒绝并按 1.2s、2.6s、5s 有界重试；不重发工具副作用。
 
 ## 配置
 
 - `configs/qwen-audio-3.0-realtime-flash-agent.yaml`
+- `configs/qwen-audio-3.0-realtime-plus-agent.yaml`
+- `configs/qwen-audio-3.1-realtime-plus-agent.yaml`
 - `configs/qwen-audio3-smart-turn.yaml`
 
 连接探针默认同样使用 Audio 3.0 Flash：

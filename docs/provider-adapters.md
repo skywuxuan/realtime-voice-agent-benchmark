@@ -8,14 +8,14 @@
 | `step-realtime` | implemented | StepAudio 3 Realtime，24 kHz PCM16、Bearer WebSocket、manual commit（server VAD 可显式试验）与自定义 function calling |
 | `doubao-realtime` | implemented | Seed Duplex 3.0 JSON Realtime、音频流和工具结果回注 |
 
-仍未核验的 provider 可以生成不联网的 capability artifact：
+注册信息 probe 不联网，只输出配置路径与凭据变量：
 
 ```bash
 .venv/bin/python -m benchmark.provider_probe \
   --model step-realtime --output runs/probes/step
 ```
 
-该 probe 不读取 key、不连接服务，也不把 unknown 写成 supported 或 unsupported。
+该 probe 不读取 key、不连接服务，不能替代 live smoke 或能力证据。
 
 StepAudio 3 Realtime 的当前核验资料为：
 

@@ -4,10 +4,13 @@
 
 ## 当前范围
 
-- Qwen 商业适配器支持 `qwen-audio-3.0-realtime-flash` 和
-  `qwen-audio-3.0-realtime-plus`，使用服务端 smart-turn 与工具结果回注。
+- Qwen 商业适配器支持 `qwen-audio-3.0-realtime-flash`、
+  `qwen-audio-3.0-realtime-plus` 和 `qwen-audio-3.1-realtime-plus`，使用服务端
+  smart-turn 与工具结果回注。
 - Doubao 适配器实现 Seed Duplex 3.0 JSON Realtime 协议、音频流、自动判停、
   Function Calling 和工具结果回注。
+- Step 适配器实现 `stepaudio-3-realtime-preview` 的 24 kHz PCM、manual commit、
+  Function Calling 和工具结果回注；server VAD 仍是显式实验路径。
 - `benchmark.run --suite realtime` 支持 latency、interruption、backchannel、
   turn-taking、pause 和 overlap；不同 category 不合并 Overall Score。
 - `benchmark.run --suite agent` 只执行 Adapter 实际产生的 `tool_call_end`。
@@ -16,14 +19,16 @@
   Agent suite。源标签与 schema 冲突时拒绝编译，不做静默类型转换。
 - `scripts/cockpit_campaign.py` 支持按源行分片、封口后恢复、cache-only 音频复用和
   invalid-only retry。`reports/cockpit_comparison.py` 只生成本地对比报告。
-- Step 保持 deferred，未核验的 live 协议不得伪造实现。
+- Step 在 `tool_call_end` 后执行并回注工具，Qwen/Seed 默认等待 response end；差异通过
+  adapter policy 表达，不在 runner 中硬编码 provider 名称。
 
 ## 数据与发布边界
 
 - 外部测试集、转换产物、编译 suite、冻结音频、运行工件、进度文件、中间产物和报告
   只保存在本地，并由 `.gitignore` 排除。
-- 仓库文档不得记录实际测试内容、样本原文、数据规模、运行目录、报告路径、得分、
-  pass/fail 数量或具体失败案例。
+- 仓库常规文档不得散落实际测试内容、样本原文、运行目录、得分或具体失败案例。用户明确
+  要求的 dated handoff 可集中记录本地工件入口与阶段结论；当前入口为
+  `docs/handoff-five-model-cockpit-2026-09-28.md`。
 - 面向人的普通 JSON 使用稳定缩进和未转义中文；JSONL 保持一行一条。
 - API key 只从进程环境读取，不写源码、配置、日志、报告或命令行实参。
 
