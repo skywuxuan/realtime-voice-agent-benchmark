@@ -25,12 +25,14 @@ def _report_paths(progress_path: Path, *, prefix_reports: tuple[Path, ...]) -> t
     return prefix_reports + tuple(Path(shard["report"]) for shard in progress["shards"])
 
 
-def _provider_rows(
-    *, progress_path: Path, prefix_reports: tuple[Path, ...], max_line: int
+def _provider_rows_from_reports(
+    *, report_paths: tuple[Path, ...], max_line: int
 ) -> tuple[dict[int, dict], list[dict]]:
+    if not report_paths:
+        raise ValueError("at least one provider report is required")
     rows = {}
     references = []
-    for report_path in _report_paths(progress_path, prefix_reports=prefix_reports):
+    for report_path in report_paths:
         report = _read(report_path)
         references.append(
             {
@@ -49,6 +51,15 @@ def _provider_rows(
                 raise ValueError(f"provider reports contain duplicate source line {line}")
             rows[line] = case
     return rows, references
+
+
+def _provider_rows(
+    *, progress_path: Path, prefix_reports: tuple[Path, ...], max_line: int
+) -> tuple[dict[int, dict], list[dict]]:
+    return _provider_rows_from_reports(
+        report_paths=_report_paths(progress_path, prefix_reports=prefix_reports),
+        max_line=max_line,
+    )
 
 
 def _argument_diff(expected: dict, actual: dict) -> dict:
